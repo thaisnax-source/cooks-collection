@@ -1,0 +1,1818 @@
+<!--
+Notes for Production:
+1.  Logo: The logo is currently linked directly from its i.ibb.co URL.
+2.  Tailwind CSS: This file uses the Tailwind CDN for development. For production, you should run
+    the Tailwind CLI to process your CSS and create a smaller, purged file.
+    - npm install -D tailwindcss
+    - npx tailwindcss -c ./tailwind.config.js -i ./your-input.css -o ./your-output.css --watch
+3.  Styling: Most core component styles (modals, cards, buttons) are defined in the <style>
+    tag in the <head>. You can tweak CSS variables there or use Tailwind utility classes directly.
+-->
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sports Card Inventory System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .nav-link.active {
+            background-color: #4f46e5; /* indigo-600 */
+            color: #ffffff;
+        }
+        .dark .nav-link.active {
+            background-color: #6366f1; /* indigo-500 */
+        }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            color: white;
+            z-index: 150;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            transform: translateY(-20px);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .toast.success { background-color: #10B981; }
+        .toast.error { background-color: #EF4444; }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 50px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .modal-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            max-width: 500px;
+            width: 90%;
+            transform: scale(0.95);
+            transition: transform 0.3s;
+        }
+        .dark .modal-content { background: #1f2937; }
+        .modal-overlay.show .modal-content {
+            transform: scale(1);
+        }
+        .comps-view .modal-content { max-width: 80rem; }
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .skeleton {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            background-color: #e5e7eb;
+        }
+        .dark .skeleton { background-color: #374151; }
+        @keyframes pulse { 50% { opacity: .5; } }
+        .photo-dropzone { border: 2px dashed #d1d5db; }
+        .dark .photo-dropzone { border-color: #4b5563; }
+        .photo-dropzone.dragover { border-color: #4f46e5; background-color: #eef2ff; }
+        .dark .photo-dropzone.dragover { background-color: #312e81; }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+    <script>
+        // Apply theme on initial load to prevent flash
+        if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
+
+    <!-- Main Container -->
+    <div id="app" class="p-4 md:p-6">
+        <!-- App shell will be rendered here by JavaScript -->
+    </div>
+    
+    <input type="file" id="photo-upload-input" class="hidden" accept="image/*">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 id="modal-title" class="text-lg font-bold mb-4">Are you sure?</h3>
+            <div id="modal-body" class="mb-6">This action cannot be undone.</div>
+            <div class="flex justify-end space-x-4">
+                <button id="modal-cancel-btn" class="bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded">Cancel</button>
+                <button id="modal-confirm-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Run Comps Modal -->
+    <div id="run-comps-modal" class="modal-overlay comps-view">
+        <div class="modal-content max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <h3 class="text-lg font-bold mb-4">Running Comps...</h3>
+            <div id="comps-progress">
+                <!-- Progress steps will be injected here -->
+            </div>
+            <div id="comps-results" class="hidden mt-6">
+                <!-- Results will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // --- CONFIG & STATE ---
+        const THB_CONVERSION_RATE = 36.5; // Updated to a more current rate
+        const state = {
+            records: [],
+            currentView: 'dashboard',
+            selectedCard: null,
+            auditSelectedLocation: null,
+            auditCurrentPage: 1,
+            searchQuery: '',
+            searchField: 'Player',
+            searchResults: [],
+            searchCurrentPage: 1,
+            _modalConfirmCallback: null,
+            scanImageData: { front: null, back: null },
+            photoUploadTarget: null,
+            fromView: null, // Stores the previous view for back navigation
+        };
+
+        const getCredentials = () => ({
+            apiKey: document.getElementById('apiKey').value,
+            baseId: document.getElementById('baseId').value,
+            tableName: document.getElementById('tableName').value,
+            geminiApiKey: document.getElementById('geminiApiKey').value,
+            imgbbApiKey: document.getElementById('imgbbApiKey').value,
+        });
+        
+        // --- MAIN APP CONTAINER ---
+        const appContainer = document.getElementById('app');
+
+        // --- API HELPERS ---
+        async function airtableFetch(method, path = '', body = null) {
+            const { apiKey, baseId, tableName } = getCredentials();
+            if (!apiKey || !baseId || !tableName) {
+                showToast("Airtable credentials are missing.", 'error');
+                throw new Error("Airtable credentials are missing.");
+            }
+            
+            const url = `https://api.airtable.com/v0/${baseId}/${tableName}${path}`;
+            const headers = { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+            const options = { method, headers };
+            if (body) options.body = JSON.stringify(body);
+
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    let errorText = `HTTP error! status: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        console.error('Airtable Error details:', errorData); // Log full details
+                        errorText = errorData.error?.message || errorText;
+                    } catch {}
+                    throw new Error(errorText);
+                }
+                return response.json();
+            } catch (error) {
+                console.error("Airtable API Error:", error);
+                showToast(error.message, 'error');
+                throw error;
+            }
+        }
+        
+        async function fetchAllAirtableRecords() {
+            let allRecords = [];
+            let offset = null;
+            const viewParams = 'view=Grid%20view';
+
+            do {
+                const path = `?${viewParams}${offset ? `&offset=${offset}` : ''}`;
+                const data = await airtableFetch('GET', path);
+                allRecords.push(...data.records);
+                offset = data.offset;
+            } while (offset);
+
+            return allRecords.map(r => ({ id: r.id, ...r.fields }));
+        }
+
+        // --- UI UTILITIES ---
+        function showLoader() {
+            const contentArea = document.getElementById('content-area');
+            if(contentArea) contentArea.innerHTML = '<div class="loader"></div>';
+        }
+        
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            if(toast) {
+                toast.textContent = message;
+                toast.className = `toast ${type} show`;
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                }, 4000);
+            }
+        }
+
+        const formatCurrency = (value, currency = 'THB') => {
+            const options = { style: 'currency', currency };
+            if (currency === 'THB') {
+                 return new Intl.NumberFormat('th-TH', options).format(value || 0);
+            }
+            return new Intl.NumberFormat('en-US', options).format(value || 0);
+        };
+        
+        const formatTHBWithUSD = (thbValue) => {
+            if (thbValue === undefined || thbValue === null) return '';
+            const thbFormatted = formatCurrency(thbValue, 'THB');
+            const usdValue = (thbValue || 0) / THB_CONVERSION_RATE;
+            const usdFormatted = formatCurrency(usdValue, 'USD');
+            return `${thbFormatted} (${usdFormatted})`;
+        }
+
+        function showConfirmationModal({ title, body, onConfirm }) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').innerHTML = body;
+            const modal = document.getElementById('confirmation-modal');
+            modal.classList.add('show');
+            state._modalConfirmCallback = onConfirm;
+        }
+
+        function hideConfirmationModal() {
+            const modal = document.getElementById('confirmation-modal');
+            modal.classList.remove('show');
+            state._modalConfirmCallback = null;
+        }
+
+        function canonicalEbay(url) {
+          try {
+            const u = new URL(url);
+            if (!u.hostname.endsWith('ebay.com')) return null;
+            const m = u.pathname.match(/\/itm\/(\d+)/) || u.search.match(/(?:item=|itm=)(\d{6,})/i);
+            return m ? `https://www.ebay.com/itm/${m[1]}` : null;
+          } catch { return null; }
+        }
+
+        function sanitizeLinks(links = []) {
+          return links.map(l => canonicalEbay(String(l).trim()))
+                      .filter(Boolean)
+                      .filter((v,i,a) => a.indexOf(v) === i);
+        }
+        
+        function splitCompNotes(notesStr = "") {
+          const out = { links: [], justification: "" };
+          if (!notesStr) return out;
+          const lines = notesStr.split(/\r?\n/);
+          let inLinks = false;
+          for (let i=0;i<lines.length;i++) {
+            const line = lines[i];
+            if (/^\s*Links:\s*$/i.test(line)) { inLinks = true; continue; }
+            if (/^\s*Justification:\s*/i.test(line)) {
+              inLinks = false;
+              out.justification = line.replace(/^\s*Justification:\s*/i, '') + "\n" + lines.slice(i+1).join("\n");
+              break;
+            }
+            if (inLinks) {
+              const m = line.match(/https?:\/\/\S+/);
+              if (m) out.links.push(m[0]);
+            }
+          }
+          if (!out.justification) out.justification = notesStr;
+          return out;
+        }
+
+        function parseAndRenderCompNotes(notes) {
+            if (!notes) return '';
+
+            const { links, justification } = splitCompNotes(notes);
+
+            if (links.length === 0 && !justification.trim() && notes.trim()) {
+                return `<p class="text-sm whitespace-pre-wrap">${notes}</p>`;
+            }
+
+            let html = '';
+            if (links.length > 0) {
+                html += `
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <h5 class="font-semibold text-gray-600 dark:text-gray-400">Comp Links</h5>
+                            <button class="copy-btn text-xs bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded" data-copy-type="links">Copy</button>
+                        </div>
+                        <div class="border rounded-md p-2 bg-gray-50 dark:bg-gray-800/50">
+                            <ul class="list-disc list-inside space-y-1">
+                                ${links.map(link => `<li><a href="${link}" target="_blank" class="text-blue-500 hover:underline truncate block">${link}</a></li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>`;
+            }
+
+            if (justification.trim()) {
+                html += `
+                     <div class="mt-3">
+                        <div class="flex justify-between items-center mb-1">
+                             <h5 class="font-semibold text-gray-600 dark:text-gray-400">Justification</h5>
+                             <button class="copy-btn text-xs bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded" data-copy-type="justification">Copy</button>
+                        </div>
+                        <div class="border rounded-md p-2 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap">
+                           <p class="text-sm">${justification.trim()}</p>
+                        </div>
+                    </div>`;
+            }
+
+            return html;
+        }
+
+
+        // --- DASHBOARD MODULE ---
+        async function initDashboard() {
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <div class="space-y-6">
+                    <h2 class="text-xl font-bold">Dashboard</h2>
+                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                        ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                         <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
+                         <div class="space-y-2">
+                            ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
+                         </div>
+                    </div>
+                </div>
+            `;
+
+            try {
+                if (state.records.length === 0) {
+                    state.records = await fetchAllAirtableRecords();
+                }
+                const records = state.records;
+                
+                let totalCards = records.length;
+                let totalGraded = records.filter(r => r['Grading Company'] && r['Grading Company'] !== 'Raw').length;
+                let totalRaw = totalCards - totalGraded;
+                let totalStickerValue = records.reduce((sum, r) => sum + (r['Current Sticker'] || 0), 0);
+
+                const latestRecords = records
+                    .sort((a, b) => (Number(b.CardID) || 0) - (Number(a.CardID) || 0))
+                    .slice(0, 10);
+
+                renderDashboard({
+                    totalCards,
+                    totalGraded,
+                    totalRaw,
+                    totalStickerValue
+                }, latestRecords);
+
+            } catch (error) {
+                contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. Check your credentials and console for errors.</p>`;
+            }
+        }
+        
+        function renderDashboard(summary, latest) {
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <div class="space-y-6">
+                    <h2 class="text-xl font-bold">Dashboard (${summary.totalCards} total cards)</h2>
+                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h3 class="text-gray-500 dark:text-gray-400">Total Sticker Value</h3>
+                            <p class="text-2xl font-bold">${formatCurrency(summary.totalStickerValue, 'THB')}</p>
+                        </div>
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h3 class="text-gray-500 dark:text-gray-400">Graded Cards</h3>
+                            <p class="text-2xl font-bold">${summary.totalGraded}</p>
+                        </div>
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h3 class="text-gray-500 dark:text-gray-400">Raw Cards</h3>
+                            <p class="text-2xl font-bold">${summary.totalRaw}</p>
+                        </div>
+                         <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h3 class="text-gray-500 dark:text-gray-400">Graded vs Raw</h3>
+                            <p class="text-2xl font-bold">${summary.totalCards > 0 ? ((summary.totalGraded / summary.totalCards) * 100).toFixed(1) : 0}% Graded</p>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                        <h3 class="text-xl font-bold mb-4">Last 10 Entries</h3>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full">
+                                <thead class="bg-gray-200 dark:bg-gray-700">
+                                    <tr>
+                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Year</th>
+                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Player</th>
+                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Set</th>
+                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Card #</th>
+                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Location</th>
+                                        <th class="px-6 py-4 text-right text-xs font-medium uppercase tracking-wider">Sticker</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                    ${latest.map(item => `
+                                        <tr class="hover:bg-gray-100 dark:hover:bg-gray-900/50">
+                                            <td class="px-6 py-5 whitespace-nowrap">${item.Year || ''}</td>
+                                            <td class="px-6 py-5 whitespace-nowrap">
+                                                <a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${item.id}">${item.Player || ''}</a>
+                                            </td>
+                                            <td class="px-6 py-5 whitespace-nowrap">${item.Set || ''}</td>
+                                            <td class="px-6 py-5 whitespace-nowrap">${item['Card#'] || ''}</td>
+                                            <td class="px-6 py-5 whitespace-nowrap">${item.Location || ''}</td>
+                                            <td class="px-6 py-5 whitespace-nowrap text-right">${formatCurrency(item['Current Sticker'], 'THB')}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- INTAKE MODULE ---
+        function initIntake(prefillData = null) {
+            state.scanImageData = { front: null, back: null };
+            if (prefillData && prefillData.record) {
+                renderIntakeForm(prefillData.record, prefillData.isDuplicate);
+            } else {
+                renderIntakeChoice();
+            }
+        }
+
+        function renderIntakeChoice() {
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-bold mb-4">How would you like to add a card?</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <button id="manual-entry-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
+                            <span class="text-3xl">✍️</span>
+                            <p class="mt-2 font-semibold">Manual Entry</p>
+                        </button>
+                        <button id="scan-card-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
+                            <span class="text-3xl">📸</span>
+                            <p class="mt-2 font-semibold">Scan Card with AI</p>
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('manual-entry-btn').addEventListener('click', () => renderIntakeForm());
+            document.getElementById('scan-card-btn').addEventListener('click', renderScanCardView);
+        }
+
+        function renderScanCardView() {
+            if (!getCredentials().geminiApiKey) {
+                showToast('A Gemini API Key is required to scan cards.', 'error');
+                return;
+            }
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h2 class="text-3xl font-bold tracking-tight">Scan Card with AI</h2>
+                            <p class="text-lg text-gray-500 dark:text-gray-400">Upload front and back photos for analysis.</p>
+                        </div>
+                        <a href="#" class="text-blue-500 hover:underline flex-shrink-0 ml-4" data-view="intake">&larr; Back</a>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                        <!-- Front Scan -->
+                        <div class="text-center">
+                            <img id="scan-preview-front" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Front">
+                            <input type="file" id="card-scan-front-input" class="hidden" accept="image/*" capture="environment">
+                            <button data-side="front" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Front</button>
+                        </div>
+                        <!-- Back Scan -->
+                        <div class="text-center">
+                             <img id="scan-preview-back" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Back">
+                            <input type="file" id="card-scan-back-input" class="hidden" accept="image/*" capture="environment">
+                            <button data-side="back" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Back</button>
+                        </div>
+                    </div>
+                    <div id="scan-loader-area" class="mt-6 text-center hidden">
+                        <div class="loader mx-auto"></div>
+                        <p id="scan-status" class="text-gray-500 mt-2">Analyzing card...</p>
+                    </div>
+                    <div class="mt-6 text-center">
+                         <button id="analyze-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-lg w-full md:w-auto disabled:opacity-50 disabled:cursor-not-allowed" disabled>Analyze Photos</button>
+                    </div>
+                </div>
+            `;
+            document.querySelectorAll('.card-scan-btn').forEach(btn => 
+                btn.addEventListener('click', () => document.getElementById(`card-scan-${btn.dataset.side}-input`).click())
+            );
+            document.getElementById('card-scan-front-input').addEventListener('change', (e) => handleCardScan(e, 'front'));
+            document.getElementById('card-scan-back-input').addEventListener('change', (e) => handleCardScan(e, 'back'));
+            document.getElementById('analyze-btn').addEventListener('click', analyzeCardImages);
+        }
+
+        function handleCardScan(e, side) {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            const previewImg = document.getElementById(`scan-preview-${side}`);
+            if (!previewImg) {
+                console.warn('Preview image not found for side:', side);
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const dataUrl = event.target?.result;
+                if (!dataUrl) return;
+
+                previewImg.src = dataUrl;
+                state.scanImageData[side] = {
+                    base64: dataUrl.split(',')[1],
+                    mimeType: file.type || 'image/jpeg'
+                };
+                document.getElementById('analyze-btn').disabled = !state.scanImageData.front;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        async function analyzeCardImages() {
+            document.getElementById('scan-loader-area').classList.remove('hidden');
+            document.getElementById('analyze-btn').disabled = true;
+
+            try {
+                const extractedData = await getGeminiVisionData(state.scanImageData.front, state.scanImageData.back);
+                document.getElementById('scan-status').textContent = 'Success! Populating form...';
+                navigate('intake', { record: extractedData });
+            } catch (error) {
+                showToast(`AI analysis failed: ${error.message}`, 'error');
+                document.getElementById('scan-status').textContent = `Analysis failed. Please try again.`;
+                document.getElementById('analyze-btn').disabled = false;
+                document.getElementById('scan-loader-area').classList.add('hidden');
+            }
+        }
+
+
+        function renderIntakeForm(record = null, isDuplicate = false) {
+            const isUpdate = record && record.id && !isDuplicate;
+            const title = isUpdate ? `Editing Card: ${record.Player}` : 'Intake New Card';
+            
+            const nextCardID = isUpdate ? record.CardID : (Math.max(0, ...state.records.map(r => {
+                const s = String(r.CardID ?? '');
+                return /^\d+$/.test(s) ? Number(s) : 0;
+            })) + 1).toString();
+
+            const locations = [
+                "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
+                "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
+                "HG Safe", "Home Gallery Cabinet 1", "Raw 100–300", "Raw 300–1K",
+                "Raw Premium 1K+", "Raw Anime 300+", "Storage Box 6"
+            ];
+            const locationOptions = locations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+
+            const locationField = isUpdate ? `
+                <div class="lg:col-span-2">
+                    <label for="edit-location-select" class="block text-sm font-bold text-gray-700 dark:text-gray-300">Location</label>
+                    <select id="edit-location-select" name="Location" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500">
+                        ${locationOptions}
+                        <option value="__addNew__">Add New Location...</option>
+                    </select>
+                    <input id="edit-location-manual" type="text" class="mt-2 hidden w-full rounded-md p-2 border-gray-300 dark:border-gray-600" placeholder="Enter new location name">
+                </div>
+            ` : '';
+
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <form id="intake-form" data-record-id="${record?.id || ''}" data-mode="${isUpdate ? 'update' : 'create'}">
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h2 class="text-3xl font-bold tracking-tight">${title}</h2>
+                                <p class="text-lg text-gray-500 dark:text-gray-400">${isDuplicate ? `Adding a duplicate of ${record.Player}` : (record && record.id ? `${record.Year || ''} ${record.Set || ''}` : `Next Card ID: ${nextCardID}`)}</p>
+                            </div>
+                            <a href="#" class="text-blue-500 hover:underline flex-shrink-0 ml-4" data-view="${isUpdate ? 'card-detail' : 'dashboard'}" data-record-id="${record?.id}">&larr; Cancel</a>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div class="md:col-span-1 space-y-6">
+                                <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
+                                    <h4 class="font-bold mb-2">Photos</h4>
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Front Photo</label>
+                                            <input name="FrontPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600" value="${record?.FrontPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
+                                            <button type="button" data-field="FrontPhoto" class="upload-photo-btn mt-2 w-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 text-sm font-medium py-2 px-4 rounded">Upload Photo</button>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Back Photo</label>
+                                            <input name="BackPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600" value="${record?.BackPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
+                                            <button type="button" data-field="BackPhoto" class="upload-photo-btn mt-2 w-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 text-sm font-medium py-2 px-4 rounded">Upload Photo</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="md:col-span-2 space-y-6">
+                               <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
+                                    <h4 class="font-bold mb-2">Card Details</h4>
+                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Player *</label><input name="Player" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Player || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Set *</label><input name="Set" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Set || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Year *</label><input name="Year" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Year || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Card # *</label><input name="Card#" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Card#'] || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Subset</label><input name="Subset" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Subset || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Parallel</label><input name="Parallel" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Parallel || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Limited #</label><input name="Limited#" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Limited#'] || ''}"/></div>
+                                    </div>
+                                </div>
+                                <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
+                                    <h4 class="font-bold mb-2">Grading, Pricing & Location</h4>
+                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grading Company</label><input name="Grading Company" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Grading Company'] || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grade</label><input name="Grade" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Grade || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Cert/Serial</label><input name="Cert/Serial" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Cert/Serial'] || ''}"/></div>
+                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Current Sticker (THB)</label><input name="Current Sticker" type="number" step="0.01" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Current Sticker'] || ''}"/></div>
+                                        ${locationField}
+                                    </div>
+                                </div>
+                                <div class="pt-4 border-t dark:border-gray-700">
+                                    <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md" id="submit-btn">${isUpdate ? 'Save Changes' : 'Add Card'}</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            `;
+            
+            const locationSelect = document.getElementById('edit-location-select');
+            if(locationSelect) {
+                locationSelect.addEventListener('change', e => {
+                    document.getElementById('edit-location-manual').classList.toggle('hidden', e.target.value !== '__addNew__');
+                });
+            }
+            document.querySelectorAll('.upload-photo-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const { imgbbApiKey } = getCredentials();
+                    if (!imgbbApiKey) {
+                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
+                        return;
+                    }
+                    state.photoUploadTarget = btn.dataset.field;
+                    document.getElementById('photo-upload-input').click();
+                });
+            });
+            document.getElementById('intake-form').addEventListener('submit', handleIntakeSubmit);
+        }
+        
+        async function handleIntakeSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const submitBtn = document.getElementById('submit-btn');
+            const mode = form.dataset.mode;
+            const recordId = form.dataset.recordId;
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            const formData = new FormData(form);
+            const fields = {};
+            for (let [key, value] of formData.entries()) {
+                const trimmed = (value ?? '').toString().trim();
+                
+                if (key.includes('Photo')) {
+                    if(trimmed) fields[key] = [{ url: trimmed }];
+                    continue;
+                }
+
+                if (['Current Sticker', 'Original Sticker', 'Suggested Sticker', 'Max Dis'].includes(key)) {
+                    fields[key] = trimmed === '' ? null : Number(trimmed);
+                    continue;
+                }
+                
+                fields[key] = trimmed === '' ? null : trimmed;
+            }
+            
+            // If Airtable "Year" is a number field, coerce:
+            if (fields['Year'] !== null && fields['Year'] !== undefined && fields['Year'] !== '') {
+              const y = Number(String(fields['Year']).replace(/[^\d]/g,''));
+              if (Number.isFinite(y) && String(y).length >= 2) fields['Year'] = String(y); // Keep as string for Airtable text field
+            }
+
+            // Normalize Grading Company enum
+            function normalizeGrader(v) {
+              const s = String(v || '').toUpperCase();
+              if (!s) return null;
+              if (s.includes('PSA')) return 'PSA';
+              if (s.includes('BGS') || s.includes('BECKETT')) return 'BGS';
+              if (s.includes('CGC')) return 'CGC';
+              if (s.includes('SGC')) return 'SGC';
+              if (s.includes('SQC')) return 'SQC';
+              if (s.includes('RAW')) return 'Raw';
+              return s; // leave as-is if Airtable allows free text
+            }
+            fields['Grading Company'] = normalizeGrader(fields['Grading Company']);
+
+
+            if(mode === 'create' && !fields['Grading Company']) {
+                fields['Grade'] = 'NRMT';
+            }
+
+            // Handle location dropdown for edit mode
+            if (mode === 'update') {
+                const locationSelect = form.querySelector('#edit-location-select');
+                if(locationSelect) {
+                     fields.Location = locationSelect.value === '__addNew__'
+                        ? form.querySelector('#edit-location-manual').value
+                        : locationSelect.value;
+                }
+            }
+            
+            try {
+                if (mode === 'create') {
+                     const lastCardID = Math.max(
+                        0,
+                        ...state.records.map(r => {
+                            const s = String(r.CardID ?? '');
+                            return /^\d+$/.test(s) ? Number(s) : 0;
+                        })
+                    );
+                    fields.CardID = String(lastCardID + 1);
+                    fields.Location = 'INTAKE'; 
+
+                    const newRecord = await airtableFetch('POST', '', { records: [{ fields }], typecast: true });
+                    state.records.push({ id: newRecord.records[0].id, ...newRecord.records[0].fields });
+                    showToast("Card added successfully!");
+                    navigate('intake');
+                } else {
+                    await airtableFetch('PATCH', `/${recordId}`, { fields, typecast: true });
+                    showToast("Card updated successfully!");
+                    const recordIndex = state.records.findIndex(r => r.id === recordId);
+                    if (recordIndex !== -1) {
+                        const updatedRecord = { ...state.records[recordIndex], ...fields };
+                        state.records[recordIndex] = updatedRecord;
+                        state.selectedCard = updatedRecord;
+                    }
+                    navigate('card-detail', { recordId });
+                }
+            } catch (error) {
+                showToast(`Failed to ${mode === 'create' ? 'add' : 'update'} card.`, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = mode === 'create' ? 'Add Card' : 'Save Changes';
+            }
+        }
+
+        // --- AUDIT MODULE ---
+        async function initAudit(location = null, page = 1) {
+            const contentArea = document.getElementById('content-area');
+            showLoader();
+            try {
+                if (state.records.length === 0) {
+                    state.records = await fetchAllAirtableRecords();
+                }
+                
+                state.auditSelectedLocation = location;
+                state.auditCurrentPage = page;
+
+                if (location) {
+                    renderAuditLocationDetail();
+                } else {
+                    renderAuditSummary();
+                }
+            } catch (error) {
+                 contentArea.innerHTML = `<p class="text-red-500">Failed to load audit data. Check credentials and console.</p>`;
+            }
+        }
+        
+        function renderAuditSummary() {
+            const contentArea = document.getElementById('content-area');
+            const locationCounts = state.records.reduce((acc, record) => {
+                const loc = record.Location || 'Uncategorized';
+                acc[loc] = (acc[loc] || 0) + 1;
+                return acc;
+            }, {});
+
+            const sortedLocations = Object.entries(locationCounts).sort((a, b) => a[0].localeCompare(b[0]));
+
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
+                    <h3 class="text-xl font-bold">Audit by Location</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        ${sortedLocations.map(([location, count]) => `
+                            <a href="#" class="block p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors audit-location-link" data-location="${location}">
+                                <p class="font-semibold text-lg text-blue-600 dark:text-blue-400">${location}</p>
+                                <p class="text-gray-500 dark:text-gray-400">${count} card(s)</p>
+                            </a>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAuditLocationDetail() {
+            const contentArea = document.getElementById('content-area');
+            const location = state.auditSelectedLocation;
+            const page = state.auditCurrentPage;
+            const itemsPerPage = 10;
+
+            const locationRecords = state.records
+                .filter(r => (r.Location || 'Uncategorized') === location)
+                .sort((a, b) => (Number(a.CardID) || 0) - (Number(b.CardID) || 0));
+
+            const totalPages = Math.ceil(locationRecords.length / itemsPerPage);
+            const startIndex = (page - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedRecords = locationRecords.slice(startIndex, endIndex);
+
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xl font-bold">Location: ${location}</h3>
+                        <a href="#" class="text-blue-500 hover:underline" data-view="audit">&larr; Back to All Locations</a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                           <thead class="bg-gray-50 dark:bg-gray-700">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CardID</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Player</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Set</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider">Current Sticker</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                ${paginatedRecords.map(rec => `
+                                    <tr>
+                                        <td class="px-4 py-4">${rec.CardID}</td>
+                                        <td class="px-4 py-4"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${rec.id}">${rec.Player || ''}</a></td>
+                                        <td class="px-4 py-4">${rec.Set || ''}</td>
+                                        <td class="px-4 py-4 text-right">${formatCurrency(rec['Current Sticker'], 'THB')}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex justify-between items-center mt-4">
+                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                        <span>Page ${page} of ${totalPages}</span>
+                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="next" ${page === totalPages ? 'disabled' : ''}>Next</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // --- SEARCH MODULE ---
+        function initSearch(query = '', page = 1) {
+            renderSearchView();
+            const input = document.getElementById('search-query');
+            const btn = document.getElementById('search-btn');
+            
+            input.value = query;
+            state.searchQuery = query;
+            
+            async function run() {
+                state.searchQuery = input.value;
+                const out = document.getElementById('search-results');
+                out.innerHTML = `<div class="loader"></div>`;
+                try {
+                    const records = await searchAirtableByQuery(state.searchQuery);
+                    state.searchResults = records;
+                    renderSearchResults(1);
+                } catch (e) {
+                    console.error('Search failed:', e);
+                    out.innerHTML = `<div class="text-red-600">Search error: ${e.message}</div>`;
+                }
+            }
+
+            btn.addEventListener('click', run);
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+            
+            if(query) {
+                run();
+            }
+        }
+
+        function renderSearchView() {
+            const contentArea = document.getElementById('content-area');
+            contentArea.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+                        <div class="grid md:grid-cols-[1fr_auto] gap-3 items-end">
+                            <label class="block">
+                                <span class="text-sm font-bold text-gray-700 dark:text-gray-300">Search cards (player, set, #, notes, etc.)</span>
+                                <input id="search-query" class="w-full mt-1 rounded-md border-gray-300 dark:border-gray-600 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 2023 Topps Chrome #211"/>
+                            </label>
+                            <button id="search-btn" class="rounded-md bg-indigo-600 text-white px-4 py-2 hover:bg-indigo-700">Search</button>
+                        </div>
+                    </div>
+                    <div id="search-results"></div>
+                </div>
+            `;
+        }
+
+        async function searchAirtableByQuery(query) {
+            const q = (query || '').trim();
+            if (!q) return [];
+
+            const FIELDS = ['CardID','Year','Set','Subset','Parallel','Player','Card#','Limited#','Grading Company','Grade','Cert/Serial','Location','User Notes','Comp Notes'];
+            const esc = q.replace(/"/g, '\\"');
+            const formula = `OR(${FIELDS.map(f => `SEARCH(LOWER("${esc}"), LOWER({${f}}&""))`).join(',')})`;
+
+            const path = `?filterByFormula=${encodeURIComponent(formula)}`;
+            const data = await airtableFetch('GET', path);
+            return (data.records || []).map(r => ({ id: r.id, ...r.fields }));
+        }
+
+        function renderSearchResults(page = 1) {
+            const out = document.getElementById('search-results');
+            const records = state.searchResults;
+            state.searchCurrentPage = page;
+            const itemsPerPage = 10;
+            
+            const totalPages = Math.ceil(records.length / itemsPerPage);
+            const startIndex = (page - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedRecords = records.slice(startIndex, endIndex);
+
+            const rows = paginatedRecords.map(r => `
+                <tr class="border-t dark:border-gray-700">
+                    <td class="px-4 py-3">${r.CardID || ''}</td>
+                    <td class="px-4 py-3"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${r.id}">${r.Player || ''}</a></td>
+                    <td class="px-4 py-3">${r.Set || ''}</td>
+                    <td class="px-4 py-3">${r.Location || ''}</td>
+                    <td class="px-4 py-3 text-right">${formatCurrency(r['Current Sticker'], 'THB')}</td>
+                </tr>
+            `).join('') || `<tr><td colspan="5" class="px-3 py-6 text-center text-gray-500 dark:text-gray-400">No matches found for "${state.searchQuery}"</td></tr>`;
+
+            out.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+                    <table class="min-w-full text-sm">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-4 py-3 text-left font-medium">CardID</th>
+                                <th class="px-4 py-3 text-left font-medium">Player</th>
+                                <th class="px-4 py-3 text-left font-medium">Set</th>
+                                <th class="px-4 py-3 text-left font-medium">Location</th>
+                                <th class="px-4 py-3 text-right font-medium">Sticker</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                            ${rows}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex justify-between items-center mt-4">
+                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                    <span>Page ${page} of ${totalPages > 0 ? totalPages : 1}</span>
+                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                </div>
+            `;
+        }
+
+        // --- CARD DETAIL MODULE ---
+        async function initCardDetail(recordId) {
+            showLoader();
+            try {
+                let card = state.records.find(r => r.id === recordId);
+                if (!card) {
+                    const data = await airtableFetch('GET', `/${recordId}`);
+                    card = { id: data.id, ...data.fields };
+                }
+                state.selectedCard = card;
+                renderCardDetail();
+            } catch (error) {
+                document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not load card details: ${error.message}</p>`;
+            }
+        }
+
+        function renderCardDetail() {
+            const contentArea = document.getElementById('content-area');
+            const card = state.selectedCard;
+            if (!card) return;
+            
+            let backLinkText = `&larr; Back to Dashboard`;
+            if (state.fromView) {
+                const from = state.fromView;
+                if (from.view === 'audit' && from.params.location) {
+                    backLinkText = `&larr; Back to ${from.params.location} (Page ${from.params.page})`;
+                } else if (from.view === 'audit') {
+                    backLinkText = '&larr; Back to Audit';
+                } else if (from.view === 'search') {
+                    backLinkText = `&larr; Back to Search Results`;
+                }
+            }
+
+
+            const renderDetailRow = (label, value) => {
+                if (value === undefined || value === null || value === '') return '';
+                return `
+                    <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-700">
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">${label}</dt>
+                        <dd class="text-base text-right">${value}</dd>
+                    </div>
+                `;
+            };
+
+            const renderDetailCard = (title, content) => {
+                if (!content.trim()) return '';
+                return `
+                    <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
+                        <h4 class="font-bold mb-2">${title}</h4>
+                        <div>${content}</div>
+                    </div>
+                `;
+            };
+
+            const cardInfoContent = `
+                ${renderDetailRow('Year', card.Year)}
+                ${renderDetailRow('Set', card.Set)}
+                ${renderDetailRow('Card #', card['Card#'])}
+                ${renderDetailRow('Subset', card.Subset)}
+                ${renderDetailRow('Parallel', card.Parallel)}
+                ${renderDetailRow('Limited #', card['Limited#'])}
+                ${renderDetailRow('Card ID', card.CardID)}
+            `;
+
+            const gradingInfoContent = `
+                ${renderDetailRow('Company', card['Grading Company'])}
+                ${renderDetailRow('Grade', card.Grade)}
+                ${renderDetailRow('Cert/Serial', card['Cert/Serial'])}
+            `;
+            
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h2 class="text-3xl font-bold tracking-tight">${card.Player || 'Unknown Player'}</h2>
+                            <p class="text-lg text-gray-500 dark:text-gray-400">${card.Year || ''} ${card.Set || ''}</p>
+                        </div>
+                         <a href="#" id="back-link" class="text-blue-500 hover:underline flex-shrink-0 ml-4">${backLinkText}</a>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-1 space-y-4">
+                            <div id="photo-display-container" class="space-y-2">
+                                <img id="card-image-display" src="${card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image'}" alt="Card Photo" class="rounded-lg w-full shadow-lg">
+                                <div id="photo-controls" class="flex justify-center items-center space-x-4"></div>
+                            </div>
+                        </div>
+
+                        <div class="md:col-span-2 space-y-6">
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div class="bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-center">
+                                    <h4 class="text-sm font-medium text-blue-800 dark:text-blue-300">CURRENT STICKER</h4>
+                                    <p class="text-3xl font-bold text-blue-900 dark:text-blue-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
+                                </div>
+                                 <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
+                                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">ORIGINAL STICKER</h4>
+                                    <p class="text-3xl font-bold">${formatCurrency(card['Original Sticker'], 'THB')}</p>
+                                </div>
+                            </div>
+
+                            ${renderDetailCard('Card Details', cardInfoContent)}
+                            ${renderDetailCard('Grading', gradingInfoContent)}
+                            ${card['Comp Notes'] ? renderDetailCard('Comp Notes', parseAndRenderCompNotes(card['Comp Notes'])) : ''}
+
+                            <div id="card-actions" class="flex flex-wrap items-center gap-4 pt-4 border-t dark:border-gray-700" data-record-id="${card.id}">
+                                <button data-action="edit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Edit Card</button>
+                                <button data-action="add-another" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Add Another</button>
+                                <button data-action="run-comps" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded">Run Comps</button>
+                                <button data-action="delete" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded ml-auto">Delete Card</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // After rendering, populate photo controls
+            const photoControls = document.getElementById('photo-controls');
+            let controlsHTML = '';
+
+            if (!card.FrontPhoto?.[0]?.url) {
+                controlsHTML += `<div id="add-photo-FrontPhoto"><button data-action="add-photo-start" data-field="FrontPhoto" class="text-sm text-blue-500 hover:underline">Add Front Photo</button></div>`;
+            }
+
+            if (card.BackPhoto?.[0]?.url) {
+                controlsHTML += `<button data-action="toggle-photo" class="text-sm text-blue-500 hover:underline">Show Back</button>`;
+            } else {
+                 controlsHTML += `<div id="add-photo-BackPhoto"><button data-action="add-photo-start" data-field="BackPhoto" class="text-sm text-blue-500 hover:underline">Add Back Photo</button></div>`;
+            }
+            photoControls.innerHTML = controlsHTML;
+        }
+        
+        // --- RUN COMPS MODULE ---
+        async function getGeminiVisionData(frontData, backData) {
+            const { geminiApiKey } = getCredentials();
+            const model = 'gemini-2.5-flash-preview-05-20';
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+
+            const prompt = `Analyze these sports card images. First, determine if it's a graded card in a slab (like PSA, SQC, BGS).
+If it IS GRADED, you MUST extract: "Grading Company", the numeric "Grade", and the "Cert/Serial" number. For PSA, this is 7-10 digits on the FRONT. For SQC, this is a number starting with "SN" on the BACK.
+If it is NOT GRADED (a raw card), return null for those three fields.
+Always extract the standard card details: "Player", "Set" (do not include the year in the set name), "Year" (as a four-digit string), "Card#", "Subset", "Parallel", and "Limited#".
+Return ONLY a single, clean JSON object with this exact structure, with null for any value you cannot find:
+{"Player": "string", "Set": "string", "Year": "string", "Card#": "string", "Subset": "string", "Parallel": "string", "Limited#": "string", "Grading Company": "string" or null, "Grade": "string" or null, "Cert/Serial": "string" or null}`;
+            
+            const parts = [{ text: prompt }];
+            if(frontData) {
+                parts.push({ inline_data: { mime_type: frontData.mimeType, data: frontData.base64 } });
+            }
+             if(backData) {
+                parts.push({ inline_data: { mime_type: backData.mimeType, data: backData.base64 } });
+            }
+            
+            const payload = { contents: [{ parts }] };
+
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(`Gemini Vision API error: ${response.statusText}`);
+            const data = await response.json();
+            
+            if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+                throw new Error("Invalid response structure from Gemini Vision API.");
+            }
+
+            const textResponse = data.candidates[0].content.parts[0].text;
+            const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                throw new Error("Could not find a valid JSON object in the Gemini Vision response.");
+            }
+            return JSON.parse(jsonMatch[0]);
+        }
+
+        async function getGeminiComps(card, apiKey, reasoning = null) {
+            try {
+                const model = 'gemini-2.5-flash-preview-05-20';
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                
+                const prompt = `You are a pricing analyst for Cook’s Collectibles. Your job is to produce strict JSON only (no prose outside the JSON) with fair market value (FMV), suggested show sticker, floor price, and real sold-comp links for a single trading card.
+
+// --- INPUTS ---
+CARD:
+year: ${card.Year || ''}
+set: ${card.Set || ''}
+subset: ${card.Subset || ''}
+player: ${card.Player || ''}
+cardNumber: ${card['Card#'] || ''}
+parallel: ${card.Parallel || ''}
+serial: ${card['Limited#'] || ''}
+gradingCompany: ${card['Grading Company'] || 'Raw'}
+grade: ${card.Grade || ''}
+frontImageUrl: ${card.FrontPhoto?.[0]?.url || ''}
+backImageUrl: ${card.BackPhoto?.[0]?.url || ''}
+
+PRICING_POLICY:
+dealerFloorLossPct: 0.30
+stickerPremiumPct: 0.08
+usdToTHB: ${THB_CONVERSION_RATE}
+
+SEARCH_HINT: ${reasoning || ''}
+// --- END INPUTS ---
+
+
+// --- RULES ---
+1.  **Match Priority**: Match the exact card first: year → set → subset → parallel/color → serial (/###) → card # → auto/mem → grader/grade.
+2.  **Sold Comps Only**: Use only sold comps (not asking prices). Priority order: eBay sold/completed → major auction houses/marketplaces.
+3.  **Time Window**: last 180 days. If fewer than 3 valid comps, extend to 365 days. If still thin, allow near-matches with clear "approx" flags and penalties.
+4.  **Validate Links**:
+    * eBay links must be canonical: https://www.ebay.com/itm/<ITEM_ID> (no extra query params).
+    * Exclude search result pages, stores, or links without a valid item id.
+5.  **Clean Comps**:
+    * Drop mismatches (wrong year/set/player/parallel/serial/auto).
+    * Keep graded vs raw consistent with the subject; if you must mix, apply penalties and mark approx: true.
+    * Remove outliers (outside 10th–90th percentile or |z| > 2).
+6.  **Compute FMV**:
+    * Calculate P25, Median, P75 and a simple recency-weighted average (WA).
+    * FMV_USD = clamp(WA, P25…P75). If too few comps, use median or best available estimate.
+7.  **Grade Adjustments** (only if you must mix):
+    * Rough modern baseline: PSA10 ≈ 1.0× (anchor), PSA9 ≈ 0.55–0.75× of PSA10, PSA8 ≈ 0.35–0.55× of PSA10.
+    * Cross-grader liquidity discount vs PSA: SGC/CGC 0.9–1.0×, BGS 0.9–1.0×, SQC 0.8–0.9×.
+    * When applied, explain it briefly in justification.
+8.  **Sticker & Floor Pricing**:
+    * StickerUSD = clamp(FMV_USD × (1 + stickerPremiumPct), P25_USD×0.95 … P75_USD×1.15) then round to friendly steps ($5 if ≥100; $2 if ≥50; $1 otherwise).
+    * FloorUSD = FMV_USD × (1 – dealerFloorLossPct) and round to same steps.
+    * Convert to THB and round to ฿50 steps.
+9.  **Image Use**: If images are provided, use them to confirm details. If images contradict text inputs, prefer the image and mention the correction in warnings.
+10. **Output Format**: Output only the strict JSON defined below. No backticks, no extra text. Include a short human-readable justification string and return 3–6 top-quality links.
+
+// --- JSON OUTPUT STRUCTURE (RETURN ONLY THIS) ---
+{
+  "card": {
+    "year": "...", "set": "...", "subset": "...", "player": "...", "cardNumber": "...", "parallel": "...", "serial": "...", "gradingCompany": "...", "grade": "...", "imageUsed": true
+  },
+  "bucket": { "parallel": "...", "serial": "...", "note": "exact | approx" },
+  "sold": [
+    { "url": "https://www.ebay.com/itm/###########", "title": "...", "priceUSD": 0, "date": "YYYY-MM-DD", "source": "ebay", "approx": false, "grader": "PSA|BGS|SGC|CGC|SQC|Raw", "grade": "10|9.5|9|8|raw", "serialMatch": true }
+  ],
+  "stats": { "count": 0, "P25_USD": 0, "MED_USD": 0, "P75_USD": 0, "WA_USD": 0, "FMV_USD": 0, "confidence": "low | medium | high" },
+  "pricing": { "stickerUSD": 0, "floorUSD": 0, "stickerTHB": 0, "floorTHB": 0 },
+  "links": [ "https://www.ebay.com/itm/###########" ],
+  "justification": "Short paragraph explaining comp selection, removals, any grade/parallel penalties, and how FMV/sticker/floor were derived.",
+  "warnings": [ "Any caveats (e.g., used near-match comps due to scarcity, images contradicted text, etc.)" ]
+}`;
+
+                const payload = { 
+                    contents: [{ parts: [{ text: prompt }] }],
+                    tools: [{ "google_search": {} }]
+                };
+
+                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMessage = errorData.error?.message || `HTTP Error: ${response.status} ${response.statusText}`;
+                    if (response.status === 400) {
+                        throw new Error(`Bad Request (400). Please check if your Gemini API Key is correct and enabled.`);
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                
+                if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+                    throw new Error("Invalid response structure from Gemini API.");
+                }
+
+                const textResponse = data.candidates[0].content.parts[0].text;
+                
+                const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) {
+                    throw new Error("Could not find a valid JSON object in the Gemini response.");
+                }
+                try {
+                    return JSON.parse(jsonMatch[0]);
+                } catch (e) {
+                    console.error("Failed to parse JSON from Comps API:", jsonMatch[0]);
+                    throw new Error("Gemini Comps returned malformed JSON.");
+                }
+
+            } catch (error) {
+                console.error("Full Gemini Error:", error);
+                throw new Error(`Gemini API call failed. ${error.message}`);
+            }
+        }
+
+        async function executeRunComps(card, reasoning = null) {
+            const modal = document.getElementById('run-comps-modal');
+            const progressDiv = document.getElementById('comps-progress');
+            const resultsDiv = document.getElementById('comps-results');
+            const { geminiApiKey } = getCredentials();
+
+            modal.classList.add('show');
+            resultsDiv.classList.add('hidden');
+            progressDiv.innerHTML = '<div class="loader"></div>';
+            
+            const addProgressStep = (text) => {
+                const p = document.createElement('p');
+                p.className = 'text-gray-600 dark:text-gray-300 text-center mt-2';
+                p.textContent = text;
+                progressDiv.appendChild(p);
+            };
+            addProgressStep(`Starting comps for ${card.Player}...`);
+            
+            let compResults;
+            if (geminiApiKey) {
+                try {
+                    addProgressStep('Connecting to Gemini for SOLD comps...');
+                    if(reasoning) addProgressStep('Applying your feedback...');
+                    compResults = await getGeminiComps(card, geminiApiKey, reasoning);
+                    addProgressStep('Comp analysis received.');
+                    progressDiv.innerHTML = ''; // Clear loader
+                } catch(error) {
+                    console.error("Run Comps Error:", error);
+                    showToast(`Live comps failed: ${error.message}. Using mock data.`, 'error');
+                    progressDiv.innerHTML = '';
+                    addProgressStep('Live comps failed. Generating mock data...');
+                    compResults = generateMockComps();
+                }
+            } else {
+                addProgressStep('No Gemini key found. Using mock data...');
+                progressDiv.innerHTML = '';
+                compResults = generateMockComps();
+            }
+            
+            displayCompsResults(card, compResults);
+        }
+
+        function generateMockComps() {
+            const fmv = (Math.random() * 50) + 5;
+            const sticker = fmv * 1.08;
+            return {
+                card: { year: "2023", set: "Mock Set", player: "Mock Player", imageUsed: false },
+                bucket: { note: "approx" },
+                sold: [
+                    { url: "https://www.ebay.com/itm/000000000000", title: "Mock Sale 1", priceUSD: fmv + 2, date: "2025-10-01", source: "ebay", approx: true },
+                    { url: "https://www.ebay.com/itm/111111111111", title: "Mock Sale 2", priceUSD: fmv - 2, date: "2025-09-15", source: "ebay", approx: true }
+                ],
+                stats: { count: 2, P25_USD: fmv-2, MED_USD: fmv, P75_USD: fmv+2, WA_USD: fmv, FMV_USD: fmv, confidence: "low" },
+                pricing: { stickerUSD: sticker, floorUSD: fmv * 0.7, stickerTHB: Math.round((sticker * THB_CONVERSION_RATE)/50)*50, floorTHB: Math.round((fmv * 0.7 * THB_CONVERSION_RATE)/50)*50 },
+                links: ["https://www.ebay.com/itm/000000000000", "https://www.ebay.com/itm/111111111111"],
+                justification: "Using mock data due to an API error or missing API key. Prices are randomized.",
+                warnings: ["This is not real data."]
+            };
+        }
+        
+        function displayCompsResults(card, compResults) {
+            const resultsDiv = document.getElementById('comps-results');
+            const { pricing, stats, sold, justification, warnings, links } = compResults;
+
+            const locations = [
+                "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
+                "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
+                "HG Safe", "Home Gallery Cabinet 1", "Raw 100–300", "Raw 300–1K",
+                "Raw Premium 1K+", "Raw Anime 300+", "Storage Box 6"
+            ];
+            const locationOptions = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+            
+            const warningsHTML = warnings && warnings.length > 0
+                ? `<div class="bg-yellow-100 dark:bg-yellow-900/50 border border-yellow-400 text-yellow-800 dark:text-yellow-300 px-4 py-3 rounded-md" role="alert">
+                      <strong class="font-bold">Heads up!</strong>
+                      <ul class="list-disc list-inside mt-1">${warnings.map(w => `<li>${w}</li>`).join('')}</ul>
+                   </div>`
+                : '';
+
+            const soldCompsHTML = sold && sold.length > 0
+                ? sold.map(s => `
+                    <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="py-2 px-3 text-sm"><a href="${s.url}" target="_blank" class="text-blue-500 hover:underline">${s.title}</a></td>
+                        <td class="py-2 px-3 text-sm text-center">${s.grader || 'N/A'} ${s.grade || ''}</td>
+                        <td class="py-2 px-3 text-sm text-center">${s.date}</td>
+                        <td class="py-2 px-3 text-sm text-right font-semibold">${formatCurrency(s.priceUSD, 'USD')}</td>
+                    </tr>`).join('')
+                : `<tr><td colspan="4" class="py-4 text-center text-gray-500">No sold comps found.</td></tr>`;
+
+            resultsDiv.innerHTML = `
+                <h4 class="font-bold text-lg">Comps Analysis Complete</h4>
+                ${warningsHTML}
+                <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                     <div class="bg-green-100 dark:bg-green-900/50 border-2 border-green-500 rounded-lg p-4 text-center">
+                        <p class="font-medium text-green-800 dark:text-green-300">Suggested Sticker Price</p>
+                        <p class="text-4xl font-bold text-green-600 dark:text-green-400">${formatCurrency(pricing.stickerTHB, 'THB')}</p>
+                        <p class="text-sm text-gray-500">${formatCurrency(pricing.stickerUSD, 'USD')}</p>
+                    </div>
+                     <div class="bg-red-100 dark:bg-red-900/50 border-2 border-red-500 rounded-lg p-4 text-center">
+                        <p class="font-medium text-red-800 dark:text-red-300">Dealer Floor Price</p>
+                        <p class="text-4xl font-bold text-red-600 dark:text-red-400">${formatCurrency(pricing.floorTHB, 'THB')}</p>
+                        <p class="text-sm text-gray-500">${formatCurrency(pricing.floorUSD, 'USD')}</p>
+                    </div>
+                </div>
+                <div class="mt-4 text-center text-sm">
+                    Based on FMV of <strong class="font-semibold">${formatCurrency(stats.FMV_USD, 'USD')}</strong> with <strong class="capitalize">${stats.confidence || 'N/A'}</strong> confidence.
+                </div>
+
+                <div class="mt-6">
+                    <h5 class="font-semibold mb-2">Justification</h5>
+                    <div class="max-h-24 overflow-y-auto border rounded-md p-3 bg-gray-50 dark:bg-gray-800 text-sm">
+                        <p>${justification || 'No justification provided.'}</p>
+                    </div>
+                </div>
+                
+                <div class="mt-6">
+                    <h5 class="font-semibold mb-2">Sold Comps Used (${stats.count || 0})</h5>
+                    <div class="max-h-60 overflow-y-auto border rounded-md bg-gray-50 dark:bg-gray-800">
+                        <table class="min-w-full">
+                            <thead class="bg-gray-200 dark:bg-gray-700"><tr>
+                                <th class="py-2 px-3 text-left text-xs font-medium uppercase">Title</th>
+                                <th class="py-2 px-3 text-center text-xs font-medium uppercase">Grade</th>
+                                <th class="py-2 px-3 text-center text-xs font-medium uppercase">Date</th>
+                                <th class="py-2 px-3 text-right text-xs font-medium uppercase">Price</th>
+                            </tr></thead>
+                            <tbody>${soldCompsHTML}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <hr class="my-6 border-gray-200 dark:border-gray-700"/>
+                <div class="space-y-2">
+                    <h4 class="font-bold text-lg">Disagree? Refine the result.</h4>
+                    <textarea id="recomp-reason" class="block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700" placeholder="e.g., this is a refractor parallel, comps are for the wrong grade..."></textarea>
+                    <button id="recomp-btn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-md">Re-Comp with Feedback</button>
+                </div>
+
+                <hr class="my-6 border-gray-200 dark:border-gray-700"/>
+
+                <div id="comps-action-form" class="space-y-4">
+                    <div>
+                        <label for="new-current-sticker" class="block text-sm font-medium">New Current Sticker (THB)</label>
+                        <input id="new-current-sticker" type="number" step="10" class="mt-1 block w-full rounded-md p-2" value="${pricing.stickerTHB || 0}">
+                    </div>
+                     <div>
+                        <label for="new-location-select" class="block text-sm font-medium">Location</label>
+                        <select id="new-location-select" class="mt-1 block w-full rounded-md p-2">
+                            ${locationOptions}
+                            <option value="__addNew__">Add New Location...</option>
+                        </select>
+                        <input id="new-location-manual" type="text" class="mt-2 hidden w-full rounded-md p-2" placeholder="Enter new location name">
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-4 mt-6">
+                    <button id="comps-cancel-btn" class="bg-gray-200 dark:bg-gray-600 font-bold py-2 px-4 rounded">Cancel</button>
+                    <button id="comps-accept-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Update & Save</button>
+                </div>`;
+            resultsDiv.classList.remove('hidden');
+
+            document.getElementById('new-location-select').addEventListener('change', e => {
+                document.getElementById('new-location-manual').classList.toggle('hidden', e.target.value !== '__addNew__');
+            });
+            
+            document.getElementById('recomp-btn').onclick = () => {
+                const reason = document.getElementById('recomp-reason').value;
+                if (!reason) {
+                    showToast('Please provide a reason to refine the search.', 'error');
+                    return;
+                }
+                executeRunComps(card, reason);
+            };
+
+            document.getElementById('comps-cancel-btn').onclick = () => document.getElementById('run-comps-modal').classList.remove('show');
+            document.getElementById('comps-accept-btn').onclick = async () => {
+                const locationSelect = document.getElementById('new-location-select');
+                const newLocation = locationSelect.value === '__addNew__' 
+                    ? document.getElementById('new-location-manual').value 
+                    : locationSelect.value;
+                
+                const compNotes = `Links:\n${(links || []).join('\n')}\n\nJustification: ${justification || 'No justification provided.'}`;
+
+                const fieldsToUpdate = {
+                    'Current Sticker': parseFloat(document.getElementById('new-current-sticker').value),
+                    'Location': newLocation,
+                    'Suggested Sticker': pricing.stickerTHB,
+                    'Comp Notes': compNotes,
+                };
+                try {
+                    await airtableFetch('PATCH', `/${card.id}`, { fields: fieldsToUpdate, typecast: true });
+                    const recordIndex = state.records.findIndex(r => r.id === card.id);
+                    if (recordIndex !== -1) state.records[recordIndex] = { ...state.records[recordIndex], ...fieldsToUpdate };
+                    if (state.selectedCard?.id === card.id) state.selectedCard = { ...state.selectedCard, ...fieldsToUpdate };
+                    document.getElementById('run-comps-modal').classList.remove('show');
+                    showToast('Comps saved and card updated!');
+                    if (state.currentView === 'audit') initAudit(state.auditSelectedLocation, state.auditCurrentPage);
+                    if (state.currentView === 'card-detail') initCardDetail(card.id);
+                } catch (error) {
+                    showToast('Failed to save comps.', 'error');
+                }
+            };
+        }
+
+        async function verifyGeminiKey() {
+            const { geminiApiKey } = getCredentials();
+            if (!geminiApiKey) {
+                showToast('Please enter a Gemini API Key first.', 'error');
+                return;
+            }
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error?.message || `HTTP Error: ${response.status}`);
+                }
+
+                const models = data.models.map(model => `
+                    <div class="p-2 border-b dark:border-gray-600">
+                        <p class="font-semibold">${model.displayName}</p>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">Model Name: <code class="bg-gray-200 dark:bg-gray-700 px-1 rounded">${model.name}</code></p>
+                    </div>
+                `).join('');
+
+                showConfirmationModal({
+                    title: 'Gemini Key Verified!',
+                    body: `Your API Key is valid. The following models are available to you: <div class="mt-4 max-h-60 overflow-y-auto border dark:border-gray-600 rounded">${models}</div>`,
+                    onConfirm: hideConfirmationModal
+                });
+                document.getElementById('modal-confirm-btn').textContent = "OK";
+                document.getElementById('modal-cancel-btn').style.display = 'none';
+
+            } catch (error) {
+                showToast(`Gemini Key Verification Failed: ${error.message}`, 'error');
+                showConfirmationModal({
+                    title: 'Verification Failed',
+                    body: `The API key is invalid or the 'Generative Language API' service is not enabled in your Google Cloud project. Please double-check the setup steps. Error: ${error.message}`,
+                    onConfirm: hideConfirmationModal
+                });
+                document.getElementById('modal-confirm-btn').textContent = "OK";
+                document.getElementById('modal-cancel-btn').style.display = 'none';
+            } finally {
+                 // Reset modal buttons after use
+                document.getElementById('modal-confirm-btn').textContent = "Confirm";
+                document.getElementById('modal-cancel-btn').style.display = 'inline-flex';
+            }
+        }
+        
+        async function savePhoto(recordId, field, url) {
+             try {
+                const fields = { [field]: [{ url }] };
+                await airtableFetch('PATCH', `/${recordId}`, { fields, typecast: true });
+                
+                const recordIndex = state.records.findIndex(r => r.id === recordId);
+                if (recordIndex !== -1) state.records[recordIndex][field] = [{ url }];
+                if (state.selectedCard?.id === recordId) state.selectedCard[field] = [{ url }];
+
+                showToast('Photo added successfully!');
+                initCardDetail(recordId); // Re-render the view
+            } catch (error) {
+                showToast('Failed to save photo.', 'error');
+            }
+        }
+
+        // --- APP ROUTER & INITIALIZATION ---
+        function navigate(view, params = {}) {
+            state.currentView = view;
+            const contentArea = document.getElementById('content-area');
+            if (!contentArea) return; // Guard against missing element
+            
+            if(params.from) {
+                state.fromView = params.from;
+            } else if (view !== 'card-detail' && view !== 'edit-card'){
+                state.fromView = null; // Clear fromView when navigating away from detail/edit
+            }
+
+
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.view === view.split('-')[0]));
+            
+            switch (view) {
+                case 'dashboard': initDashboard(); break;
+                case 'intake': 
+                    initIntake(params);
+                    break;
+                case 'audit': initAudit(params.location, params.page); break;
+                case 'card-detail': initCardDetail(params.recordId); break;
+                case 'edit-card': renderIntakeForm(params.record, false); break;
+                case 'search': initSearch(params.query, params.page); break;
+                default: initDashboard();
+            }
+        }
+
+        function renderAppShell() {
+            appContainer.innerHTML = `
+                <header class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-6">
+                    <div class="flex flex-col md:flex-row items-center justify-between">
+                        <div class="flex items-center space-x-4">
+                            <img src="https://i.ibb.co/hK2V4FV/sclogo.png" alt="Logo" class="h-12 rounded">
+                            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Card Inventory System</h1>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <nav id="navigation" class="flex space-x-2 mt-4 md:mt-0">
+                                <button data-view="dashboard" class="nav-link px-4 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">Dashboard</button>
+                                <button data-view="intake" class="nav-link px-4 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">Intake</button>
+                                <button data-view="audit" class="nav-link px-4 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">Audit</button>
+                                <button data-view="search" class="nav-link px-4 py-2 rounded-md text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">Search</button>
+                            </nav>
+                            <button id="theme-toggle" class="mt-4 md:mt-0 p-2 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">
+                                <svg id="theme-icon-light" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                                <svg id="theme-icon-dark" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+                            </button>
+                        </div>
+                    </div>
+                </header>
+
+                <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md mb-6" role="alert">
+                    <p class="font-bold">Configuration</p>
+                    <p>Enter your API credentials below. Get a free ImgBB key from <a href="https://api.imgbb.com/" target="_blank" class="font-bold underline">api.imgbb.com</a> for photo uploads.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-2 items-end">
+                        <div>
+                            <label for="apiKey" class="block text-sm font-medium">Airtable API Key</label>
+                            <input type="password" id="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="patoHcB5BiGzANgna.d321310ecb88397b355eb522eec25c5fe713cff791f6e431ce17bb703ff3ee77">
+                        </div>
+                        <div>
+                            <label for="baseId" class="block text-sm font-medium">Airtable Base ID</label>
+                            <input type="text" id="baseId" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="app7DQrgI2EZ3ogzq">
+                        </div>
+                        <div>
+                            <label for="tableName" class="block text-sm font-medium">Airtable Table Name</label>
+                            <input type="text" id="tableName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="Inventory">
+                        </div>
+                         <div>
+                            <label for="geminiApiKey" class="block text-sm font-medium">Gemini API Key</label>
+                            <input type="password" id="geminiApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for AI features">
+                        </div>
+                         <div>
+                            <label for="imgbbApiKey" class="block text-sm font-medium">ImgBB API Key</label>
+                            <input type="password" id="imgbbApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for photo uploads">
+                        </div>
+                    </div>
+                     <div class="mt-4">
+                        <button id="verify-gemini-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Verify Gemini Key & List Models</button>
+                    </div>
+                </div>
+                <main id="content-area"></main>
+            `;
+        }
+
+
+        function initApp() {
+            renderAppShell();
+            
+            document.getElementById('verify-gemini-btn').addEventListener('click', verifyGeminiKey);
+            
+            document.getElementById('theme-toggle').addEventListener('click', () => {
+              const root = document.documentElement;
+              const isDark = root.classList.toggle('dark');
+              localStorage.setItem('theme', isDark ? 'dark' : 'light');
+              document.getElementById('theme-icon-light').classList.toggle('hidden', isDark);
+              document.getElementById('theme-icon-dark').classList.toggle('hidden', !isDark);
+            });
+            
+            (function(){
+              const isDark = document.documentElement.classList.contains('dark');
+              document.getElementById('theme-icon-light').classList.toggle('hidden', isDark);
+              document.getElementById('theme-icon-dark').classList.toggle('hidden', !isDark);
+            })();
+
+            document.addEventListener('click', (e) => {
+                const navLink = e.target.closest('.nav-link');
+                if (navLink) return navigate(navLink.dataset.view);
+
+                const cardLink = e.target.closest('.view-card-link');
+                if (cardLink) {
+                    e.preventDefault();
+                    const recordId = cardLink.dataset.recordId;
+                    if (recordId) {
+                        let from = { view: state.currentView, params: {} };
+                        if (state.currentView === 'audit' && state.auditSelectedLocation) {
+                            from.params = { location: state.auditSelectedLocation, page: state.auditCurrentPage };
+                        } else if (state.currentView === 'audit') {
+                            from.params = {}; // Top-level audit
+                        } else if (state.currentView === 'search') {
+                            from.params = { query: state.searchQuery, page: state.searchCurrentPage };
+                        }
+                        
+                        navigate('card-detail', { recordId, from });
+                    }
+                    return;
+                }
+                
+                const backLink = e.target.closest('#back-link');
+                if(backLink) {
+                    e.preventDefault();
+                    if (state.fromView) {
+                        navigate(state.fromView.view, state.fromView.params);
+                    } else {
+                        navigate('dashboard');
+                    }
+                    return;
+                }
+
+                const addPhotoButton = e.target.closest('[data-action="add-photo-start"]');
+                if (addPhotoButton) {
+                    const { imgbbApiKey } = getCredentials();
+                    if (!imgbbApiKey) {
+                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
+                        return;
+                    }
+                    state.photoUploadTarget = addPhotoButton.dataset.field;
+                    document.getElementById('photo-upload-input').click();
+                    return;
+                }
+                
+                const togglePhotoButton = e.target.closest('[data-action="toggle-photo"]');
+                if(togglePhotoButton) {
+                    const cardImage = document.getElementById('card-image-display');
+                    const currentSrc = cardImage.src;
+                    const card = state.selectedCard;
+                    
+                    if (currentSrc === (card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image')) {
+                        cardImage.src = card.BackPhoto?.[0]?.url;
+                        togglePhotoButton.textContent = 'Show Front';
+                    } else {
+                        cardImage.src = card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image';
+                        togglePhotoButton.textContent = 'Show Back';
+                    }
+                    return;
+                }
+
+                const actionButton = e.target.closest('#card-actions button');
+                if (actionButton) {
+                    const { action } = actionButton.dataset;
+                    const recordId = actionButton.closest('#card-actions').dataset.recordId;
+                    const card = state.records.find(r => r.id === recordId) || state.selectedCard;
+                    if (!card) return;
+
+                    switch (action) {
+                        case 'edit': return navigate('edit-card', { record: card });
+                        case 'add-another': return navigate('intake', { record: { ...card }, isDuplicate: true });
+                        case 'run-comps': return executeRunComps(card);
+                        case 'delete':
+                            return showConfirmationModal({
+                                title: 'Delete Card?',
+                                body: `Permanently delete Card ID ${card.CardID} (${card.Player})? This cannot be undone.`,
+                                onConfirm: async () => {
+                                    await airtableFetch('DELETE', `/${recordId}`);
+                                    state.records = state.records.filter(r => r.id !== recordId);
+                                    hideConfirmationModal();
+                                    showToast('Card deleted.');
+                                    navigate('audit');
+                                }
+                            });
+                    }
+                }
+                
+                const locationLink = e.target.closest('.audit-location-link');
+                if(locationLink){
+                    e.preventDefault();
+                    return navigate('audit', { location: locationLink.dataset.location, page: 1 });
+                }
+
+                const pageNavBtn = e.target.closest('.search-pagination-btn, .pagination-btn');
+                if(pageNavBtn){
+                    const direction = pageNavBtn.dataset.pageNav;
+                    const view = pageNavBtn.classList.contains('search-pagination-btn') ? 'search' : 'audit';
+                    
+                    if (view === 'search') {
+                         const newPage = direction === 'next' ? state.searchCurrentPage + 1 : state.searchCurrentPage - 1;
+                         renderSearchResults(newPage);
+                    } else {
+                         const newPage = direction === 'next' ? state.auditCurrentPage + 1 : state.auditCurrentPage - 1;
+                        return navigate('audit', { location: state.auditSelectedLocation, page: newPage });
+                    }
+                }
+
+                if (e.target.id === 'modal-confirm-btn' && state._modalConfirmCallback) state._modalConfirmCallback();
+                if (e.target.id === 'modal-cancel-btn' || e.target === document.getElementById('confirmation-modal')) hideConfirmationModal();
+            });
+            
+            async function handlePhotoUpload(e) {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                const { imgbbApiKey } = getCredentials();
+                if (!imgbbApiKey) {
+                    showToast('ImgBB API Key is missing.', 'error');
+                    return;
+                }
+
+                const targetField = state.photoUploadTarget;
+                if (!targetField) return;
+                
+                const originalButton = document.querySelector(`button[data-field="${targetField}"]`);
+                const originalButtonText = originalButton ? originalButton.textContent : 'Upload';
+                if(originalButton) originalButton.textContent = 'Uploading...';
+                if(originalButton) originalButton.disabled = true;
+
+                const formData = new FormData();
+                formData.append('image', file);
+
+                try {
+                    const response = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    const result = await response.json();
+                    if (!result.success) {
+                        throw new Error(result.error?.message || 'Unknown upload error');
+                    }
+                    const imageUrl = result.data.url;
+
+                    if (state.currentView === 'card-detail') {
+                        await savePhoto(state.selectedCard.id, targetField, imageUrl);
+                    } else {
+                        const inputField = document.querySelector(`input[name="${targetField}"]`);
+                        if (inputField) {
+                            inputField.value = imageUrl;
+                            showToast('Photo uploaded!', 'success');
+                        }
+                    }
+                } catch (error) {
+                    showToast(`Upload failed: ${error.message}`, 'error');
+                    console.error("ImgBB Upload Error:", error);
+                } finally {
+                    if (originalButton) {
+                        originalButton.textContent = originalButtonText;
+                        originalButton.disabled = false;
+                    }
+                    e.target.value = ''; // Reset file input
+                }
+            }
+
+            document.getElementById('photo-upload-input').addEventListener('change', handlePhotoUpload);
+            // Initial load
+            navigate('dashboard');
+        }
+
+        // --- START THE APP ---
+        document.addEventListener('DOMContentLoaded', initApp);
+
+    </script>
+</body>
+</html>
+
