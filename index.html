@@ -293,30 +293,34 @@ Notes for Production:
         function parseAndRenderCompNotes(notes) {
             if (!notes) return '';
 
-            const lines = notes.split('\n');
-            const links = [];
+            let links = [];
             let justification = '';
-            let isJustificationSection = false;
 
-            for (const line of lines) {
-                if (line.toLowerCase().startsWith('links:')) {
-                    isJustificationSection = false;
-                    continue; // Skip the "Links:" header
-                }
-                if (line.toLowerCase().startsWith('justification:')) {
-                    isJustificationSection = true;
-                    justification += line.substring(14).trim() + '\n'; // Add the rest of the line
-                    continue; // Skip the "Justification:" header
-                }
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+
+            const justificationIndex = notes.toLowerCase().indexOf('justification:');
+
+            if (justificationIndex !== -1) {
+                const linksAndHeaderSection = notes.substring(0, justificationIndex);
+                links = linksAndHeaderSection.match(urlRegex) || [];
                 
-                if (isJustificationSection) {
-                    justification += line + '\n';
-                } else if (line.trim().startsWith('http')) {
-                    links.push(line.trim());
+                justification = notes.substring(justificationIndex + 'justification:'.length).trim();
+            } else {
+                links = notes.match(urlRegex) || [];
+                justification = notes;
+            }
+
+            if (justification.trim()) {
+                const tempLinksString = (links.join(' ') + 'Links:').toLowerCase();
+                let justTrimmed = justification.trim().toLowerCase();
+                
+                if (justTrimmed.startsWith(tempLinksString)) {
+                    justification = justification.trim().substring(tempLinksString.length).trim();
+                } else if (justTrimmed.startsWith('links:')) {
+                    justification = justification.trim().substring(6).trim();
                 }
             }
             
-            // Fallback for notes that don't follow the format
             if (links.length === 0 && !justification.trim()) {
                 return `<div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap"><p class="text-sm">${notes}</p></div>`;
             }
@@ -326,20 +330,21 @@ Notes for Production:
                 html += `
                     <div>
                         <h5 class="font-semibold text-gray-600 dark:text-gray-400 mb-2">Comp Links</h5>
-                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50">
+                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 max-h-40 overflow-y-auto">
                             <ul class="list-disc list-inside space-y-1.5">
-                                ${links.map(link => `<li><a href="${link}" target="_blank" class="text-indigo-500 hover:underline truncate block">${link}</a></li>`).join('')}
+                                ${links.map(link => `<li><a href="${link}" target="_blank" class="text-indigo-500 hover:underline break-all">${link}</a></li>`).join('')}
                             </ul>
                         </div>
                     </div>`;
             }
 
             if (justification.trim()) {
+                const paragraphs = justification.trim().split('\n').filter(p => p.trim() !== '').map(p => `<p class="mb-2">${p}</p>`).join('');
                 html += `
                     <div class="mt-4">
                         <h5 class="font-semibold text-gray-600 dark:text-gray-400 mb-2">Justification</h5>
-                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap">
-                        <p class="text-sm">${justification.trim()}</p>
+                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 max-h-60 overflow-y-auto text-sm">
+                            ${paragraphs}
                         </div>
                     </div>`;
             }
@@ -1833,7 +1838,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 <header class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-6">
                     <div class="flex flex-col md:flex-row items-center justify-between">
                         <div class="flex items-center space-x-4">
-                            <img src="https://ibb.co/9mBk8Rq0" alt="Cooks Collectibles Logo" class="h-12 md:h-16 w-auto">
+                            <img src="https://i.ibb.co/ShzzdKT/logo-header-h64.png" alt="Cooks Collectibles Logo" class="h-12 md:h-16 w-auto">
                         </div>
                         <div class="flex items-center space-x-4">
                             <nav id="navigation" class="flex space-x-2 mt-4 md:mt-0">
