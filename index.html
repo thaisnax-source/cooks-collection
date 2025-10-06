@@ -50,7 +50,6 @@ Notes for Production:
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
-            margin: 50px auto;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
@@ -85,7 +84,7 @@ Notes for Production:
         .modal-overlay.show .modal-content {
             transform: scale(1);
         }
-        .comps-view .modal-content { max-width: 80rem; }
+        .comps-view .modal-content { max-width: 60rem; } 
         .pagination-btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -137,8 +136,11 @@ Notes for Production:
     <!-- Run Comps Modal -->
     <div id="run-comps-modal" class="modal-overlay comps-view">
         <div class="modal-content max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <h3 class="text-lg font-bold mb-4">Running Comps...</h3>
-            <div id="comps-progress">
+            <div class="flex justify-between items-center">
+                <h3 id="comps-modal-title" class="text-xl font-bold">Running Comps...</h3>
+                <button id="comps-cancel-btn" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">&times;</button>
+            </div>
+            <div id="comps-progress" class="mt-4">
                 <!-- Progress steps will be injected here -->
             </div>
             <div id="comps-results" class="hidden mt-6">
@@ -149,7 +151,7 @@ Notes for Production:
 
     <script type="module">
         // --- CONFIG & STATE ---
-        const THB_CONVERSION_RATE = 36.5; // Updated to a more current rate
+        const THB_CONVERSION_RATE = 32;
         const state = {
             records: [],
             currentView: 'dashboard',
@@ -227,7 +229,7 @@ Notes for Production:
         // --- UI UTILITIES ---
         function showLoader() {
             const contentArea = document.getElementById('content-area');
-            if(contentArea) contentArea.innerHTML = '<div class="loader"></div>';
+            if(contentArea) contentArea.innerHTML = '<div class="flex justify-center items-center h-64"><div class="loader"></div></div>';
         }
         
         function showToast(message, type = 'success') {
@@ -242,8 +244,8 @@ Notes for Production:
         }
 
         const formatCurrency = (value, currency = 'THB') => {
-            const options = { style: 'currency', currency };
-            if (currency === 'THB') {
+            const options = { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: (currency === 'USD' ? 2 : 0) };
+             if (currency === 'THB') {
                  return new Intl.NumberFormat('th-TH', options).format(value || 0);
             }
             return new Intl.NumberFormat('en-US', options).format(value || 0);
@@ -270,83 +272,10 @@ Notes for Production:
             modal.classList.remove('show');
             state._modalConfirmCallback = null;
         }
-
-        function canonicalEbay(url) {
-          try {
-            const u = new URL(url);
-            if (!u.hostname.endsWith('ebay.com')) return null;
-            const m = u.pathname.match(/\/itm\/(\d+)/) || u.search.match(/(?:item=|itm=)(\d{6,})/i);
-            return m ? `https://www.ebay.com/itm/${m[1]}` : null;
-          } catch { return null; }
-        }
-
-        function sanitizeLinks(links = []) {
-          return links.map(l => canonicalEbay(String(l).trim()))
-                      .filter(Boolean)
-                      .filter((v,i,a) => a.indexOf(v) === i);
-        }
         
-        function splitCompNotes(notesStr = "") {
-          const out = { links: [], justification: "" };
-          if (!notesStr) return out;
-          const lines = notesStr.split(/\r?\n/);
-          let inLinks = false;
-          for (let i=0;i<lines.length;i++) {
-            const line = lines[i];
-            if (/^\s*Links:\s*$/i.test(line)) { inLinks = true; continue; }
-            if (/^\s*Justification:\s*/i.test(line)) {
-              inLinks = false;
-              out.justification = line.replace(/^\s*Justification:\s*/i, '') + "\n" + lines.slice(i+1).join("\n");
-              break;
-            }
-            if (inLinks) {
-              const m = line.match(/https?:\/\/\S+/);
-              if (m) out.links.push(m[0]);
-            }
-          }
-          if (!out.justification) out.justification = notesStr;
-          return out;
-        }
-
         function parseAndRenderCompNotes(notes) {
             if (!notes) return '';
-
-            const { links, justification } = splitCompNotes(notes);
-
-            if (links.length === 0 && !justification.trim() && notes.trim()) {
-                return `<p class="text-sm whitespace-pre-wrap">${notes}</p>`;
-            }
-
-            let html = '';
-            if (links.length > 0) {
-                html += `
-                    <div>
-                        <div class="flex justify-between items-center mb-1">
-                            <h5 class="font-semibold text-gray-600 dark:text-gray-400">Comp Links</h5>
-                            <button class="copy-btn text-xs bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded" data-copy-type="links">Copy</button>
-                        </div>
-                        <div class="border rounded-md p-2 bg-gray-50 dark:bg-gray-800/50">
-                            <ul class="list-disc list-inside space-y-1">
-                                ${links.map(link => `<li><a href="${link}" target="_blank" class="text-blue-500 hover:underline truncate block">${link}</a></li>`).join('')}
-                            </ul>
-                        </div>
-                    </div>`;
-            }
-
-            if (justification.trim()) {
-                html += `
-                     <div class="mt-3">
-                        <div class="flex justify-between items-center mb-1">
-                             <h5 class="font-semibold text-gray-600 dark:text-gray-400">Justification</h5>
-                             <button class="copy-btn text-xs bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded" data-copy-type="justification">Copy</button>
-                        </div>
-                        <div class="border rounded-md p-2 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap">
-                           <p class="text-sm">${justification.trim()}</p>
-                        </div>
-                    </div>`;
-            }
-
-            return html;
+            return `<p class="text-sm whitespace-pre-wrap">${notes}</p>`;
         }
 
 
@@ -711,13 +640,11 @@ Notes for Production:
                 fields[key] = trimmed === '' ? null : trimmed;
             }
             
-            // If Airtable "Year" is a number field, coerce:
             if (fields['Year'] !== null && fields['Year'] !== undefined && fields['Year'] !== '') {
               const y = Number(String(fields['Year']).replace(/[^\d]/g,''));
-              if (Number.isFinite(y) && String(y).length >= 2) fields['Year'] = String(y); // Keep as string for Airtable text field
+              if (Number.isFinite(y) && String(y).length >= 2) fields['Year'] = String(y);
             }
 
-            // Normalize Grading Company enum
             function normalizeGrader(v) {
               const s = String(v || '').toUpperCase();
               if (!s) return null;
@@ -727,7 +654,7 @@ Notes for Production:
               if (s.includes('SGC')) return 'SGC';
               if (s.includes('SQC')) return 'SQC';
               if (s.includes('RAW')) return 'Raw';
-              return s; // leave as-is if Airtable allows free text
+              return s;
             }
             fields['Grading Company'] = normalizeGrader(fields['Grading Company']);
 
@@ -736,7 +663,6 @@ Notes for Production:
                 fields['Grade'] = 'NRMT';
             }
 
-            // Handle location dropdown for edit mode
             if (mode === 'update') {
                 const locationSelect = form.querySelector('#edit-location-select');
                 if(locationSelect) {
@@ -783,7 +709,6 @@ Notes for Production:
 
         // --- AUDIT MODULE ---
         async function initAudit(location = null, page = 1) {
-            const contentArea = document.getElementById('content-area');
             showLoader();
             try {
                 if (state.records.length === 0) {
@@ -799,7 +724,7 @@ Notes for Production:
                     renderAuditSummary();
                 }
             } catch (error) {
-                 contentArea.innerHTML = `<p class="text-red-500">Failed to load audit data. Check credentials and console.</p>`;
+                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Failed to load audit data. Check credentials and console.</p>`;
             }
         }
         
@@ -865,16 +790,16 @@ Notes for Production:
                                         <td class="px-4 py-4">${rec.CardID}</td>
                                         <td class="px-4 py-4"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${rec.id}">${rec.Player || ''}</a></td>
                                         <td class="px-4 py-4">${rec.Set || ''}</td>
-                                        <td class="px-4 py-4 text-right">${formatCurrency(rec['Current Sticker'], 'THB')}</td>
+                                        <td class="px-4 py-4 text-right">${formatCurrency(rec['Current Sticker'])}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>
                         </table>
                     </div>
                     <div class="flex justify-between items-center mt-4">
-                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
                         <span>Page ${page} of ${totalPages}</span>
-                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="next" ${page === totalPages ? 'disabled' : ''}>Next</button>
+                        <button class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="next" ${page === totalPages ? 'disabled' : ''}>Next</button>
                     </div>
                 </div>
             `;
@@ -892,7 +817,7 @@ Notes for Production:
             async function run() {
                 state.searchQuery = input.value;
                 const out = document.getElementById('search-results');
-                out.innerHTML = `<div class="loader"></div>`;
+                out.innerHTML = `<div class="flex justify-center items-center h-32"><div class="loader"></div></div>`;
                 try {
                     const records = await searchAirtableByQuery(state.searchQuery);
                     state.searchResults = records;
@@ -959,7 +884,7 @@ Notes for Production:
                     <td class="px-4 py-3"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${r.id}">${r.Player || ''}</a></td>
                     <td class="px-4 py-3">${r.Set || ''}</td>
                     <td class="px-4 py-3">${r.Location || ''}</td>
-                    <td class="px-4 py-3 text-right">${formatCurrency(r['Current Sticker'], 'THB')}</td>
+                    <td class="px-4 py-3 text-right">${formatCurrency(r['Current Sticker'])}</td>
                 </tr>
             `).join('') || `<tr><td colspan="5" class="px-3 py-6 text-center text-gray-500 dark:text-gray-400">No matches found for "${state.searchQuery}"</td></tr>`;
 
@@ -980,11 +905,12 @@ Notes for Production:
                         </tbody>
                     </table>
                 </div>
+                ${ records.length > itemsPerPage ? `
                 <div class="flex justify-between items-center mt-4">
-                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
                     <span>Page ${page} of ${totalPages > 0 ? totalPages : 1}</span>
-                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500" data-page-nav="next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
-                </div>
+                    <button class="pagination-btn search-pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                </div>` : ''}
             `;
         }
 
@@ -1019,6 +945,24 @@ Notes for Production:
                 } else if (from.view === 'search') {
                     backLinkText = `&larr; Back to Search Results`;
                 }
+            }
+
+            const currentSticker = card['Current Sticker'] || 0;
+            const originalSticker = card['Original Sticker'] || 0;
+            const delta = currentSticker - originalSticker;
+            let deltaHTML = '';
+            if (originalSticker > 0) {
+                if (delta > 0) {
+                    deltaHTML = `<p class="text-lg font-bold text-green-600 dark:text-green-400">↑ ${formatCurrency(delta, 'THB')}</p>`;
+                } else if (delta < 0) {
+                    deltaHTML = `<p class="text-lg font-bold text-red-600 dark:text-red-400">↓ ${formatCurrency(Math.abs(delta), 'THB')}</p>`;
+                } else {
+                    deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">• No Change</p>`;
+                }
+            } else if (currentSticker > 0) {
+                 deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">First Sticker</p>`;
+            } else {
+                 deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">—</p>`;
             }
 
 
@@ -1077,14 +1021,18 @@ Notes for Production:
                         </div>
 
                         <div class="md:col-span-2 space-y-6">
-                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div class="grid grid-cols-2 gap-4">
                                 <div class="bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-center">
                                     <h4 class="text-sm font-medium text-blue-800 dark:text-blue-300">CURRENT STICKER</h4>
-                                    <p class="text-3xl font-bold text-blue-900 dark:text-blue-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
+                                    <p class="text-4xl font-bold text-blue-900 dark:text-blue-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
                                 </div>
                                  <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
+                                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">STICKER DELTA</h4>
+                                    ${deltaHTML}
+                                </div>
+                                <div class="col-span-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                                     <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">ORIGINAL STICKER</h4>
-                                    <p class="text-3xl font-bold">${formatCurrency(card['Original Sticker'], 'THB')}</p>
+                                    <p class="text-xl font-bold">${formatCurrency(card['Original Sticker'], 'THB')}</p>
                                 </div>
                             </div>
 
@@ -1119,358 +1067,553 @@ Notes for Production:
             photoControls.innerHTML = controlsHTML;
         }
         
-        // --- RUN COMPS MODULE ---
-        async function getGeminiVisionData(frontData, backData) {
-            const { geminiApiKey } = getCredentials();
-            const model = 'gemini-2.5-flash-preview-05-20';
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-
-            const prompt = `Analyze these sports card images. First, determine if it's a graded card in a slab (like PSA, SQC, BGS).
-If it IS GRADED, you MUST extract: "Grading Company", the numeric "Grade", and the "Cert/Serial" number. For PSA, this is 7-10 digits on the FRONT. For SQC, this is a number starting with "SN" on the BACK.
-If it is NOT GRADED (a raw card), return null for those three fields.
-Always extract the standard card details: "Player", "Set" (do not include the year in the set name), "Year" (as a four-digit string), "Card#", "Subset", "Parallel", and "Limited#".
-Return ONLY a single, clean JSON object with this exact structure, with null for any value you cannot find:
-{"Player": "string", "Set": "string", "Year": "string", "Card#": "string", "Subset": "string", "Parallel": "string", "Limited#": "string", "Grading Company": "string" or null, "Grade": "string" or null, "Cert/Serial": "string" or null}`;
-            
-            const parts = [{ text: prompt }];
-            if(frontData) {
-                parts.push({ inline_data: { mime_type: frontData.mimeType, data: frontData.base64 } });
-            }
-             if(backData) {
-                parts.push({ inline_data: { mime_type: backData.mimeType, data: backData.base64 } });
+        // --- PRICING MODULE START ---
+        
+        /**
+         * Builds a comprehensive list of search queries for a card.
+         * @param {object} card - The card object from state.
+         * @returns {{urls: string[]}}
+         */
+        function buildCardSearchQueries(card) {
+            if (!card || typeof card !== 'object') {
+                console.error("[COMPS] buildCardSearchQueries received invalid card object:", card);
+                return { urls: [] };
             }
             
-            const payload = { contents: [{ parts }] };
+            const {
+                Player, Year, Set: cardSet, Subset, Parallel,
+                'Card#': CardNum, 'Grading Company': Grader, Grade,
+                FrontPhoto, BackPhoto
+            } = card;
 
-            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (!response.ok) throw new Error(`Gemini Vision API error: ${response.statusText}`);
-            const data = await response.json();
+            const character = Player || '';
+            const setName = cardSet || '';
+
+            let queryParts = [Year, setName, Subset, Parallel, character, CardNum ? `#${CardNum}` : ''].filter(Boolean).map(s => String(s).trim());
             
-            if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
-                throw new Error("Invalid response structure from Gemini Vision API.");
+            // Extract keywords from photo filenames
+            [FrontPhoto?.[0]?.url, BackPhoto?.[0]?.url].forEach(url => {
+                if (!url) return;
+                try {
+                    const filename = new URL(url).pathname.split('/').pop();
+                    const keywords = filename.replace(/[\.\_\-\d]/g, ' ').split(' ').filter(word => word.length > 2 && isNaN(word));
+                    queryParts.push(...keywords);
+                } catch (e) {
+                    console.warn("Could not parse photo URL for keywords:", url);
+                }
+            });
+
+            // Make query parts unique
+            queryParts = [...new Set(queryParts)];
+            const baseQuery = queryParts.join(' ');
+            
+            let gradedQuery = baseQuery;
+            if (Grader && Grader !== 'Raw' && Grade) {
+                gradedQuery += ` ${Grader} ${Grade}`;
             }
 
-            const textResponse = data.candidates[0].content.parts[0].text;
-            const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-                throw new Error("Could not find a valid JSON object in the Gemini Vision response.");
+            const isTCG = /pokémon|one piece|yu-gi-oh|weiss schwarz|digimon|dragonball/i.test(setName);
+            
+            let urls = [];
+            
+            urls.push(`https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(gradedQuery)}&LH_Complete=1&LH_Sold=1`);
+            urls.push(`https://130point.com/sales/?search=${encodeURIComponent(gradedQuery)}`);
+            
+            if (isTCG) {
+                urls.push(`https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(baseQuery)}`);
+                urls.push(`https://www.cardmarket.com/en/OnePiece/Products/Singles?searchString=${encodeURIComponent(baseQuery)}`);
+                urls.push(`https://tcgrepublic.com/category/category_page_1.html?search_word=${encodeURIComponent(baseQuery)}`);
+                if (/pokémon/i.test(setName)) {
+                    urls.push(`https://www.pokemonprice.com/Cards/Search/sales?q=${encodeURIComponent(baseQuery)}`);
+                }
+                urls.push(`https://auctions.yahoo.co.jp/search/search?p=${encodeURIComponent(baseQuery)}`);
+            } else {
+                // Add more sports-specific sources if needed
             }
-            return JSON.parse(jsonMatch[0]);
+
+            console.log('[COMPS] Generated Search URLs:', urls);
+            return { urls: [...new Set(urls)] };
         }
 
-        async function getGeminiComps(card, apiKey, reasoning = null) {
+        /**
+         * Fetches comps and pricing analysis from the Gemini API.
+         * @param {object} card - The card object.
+         * @param {string|null} manualInstructions - Optional user-provided instructions.
+         * @returns {Promise<object>} A structured object with pricing info.
+         */
+        async function getGeminiComps(card, manualInstructions = null) {
+            const { geminiApiKey } = getCredentials();
+            if (!geminiApiKey) {
+                throw new Error("Gemini API key is not set.");
+            }
+
+            console.log("[COMPS] Calling Gemini for card:", card);
+            const { urls = [] } = buildCardSearchQueries(card) || {};
+
+            const prompt = `
+You are a master trading card dealer and pricing expert with a 'progressive learning mode,' meaning you learn from every query to improve your skills. Your task is to analyze the provided card details and research sources to determine a fair market value (FMV) and other pricing metrics.
+
+**Card to Price:**
+- Player/Character: ${card.Player || 'N/A'}
+- Year: ${card.Year || 'N/A'}
+- Set: ${card.Set || 'N/A'}
+- Subset/Parallel: ${[card.Subset, card.Parallel].filter(Boolean).join(' / ') || 'N/A'}
+- Card #: ${card['Card#'] || 'N/A'}
+- Grading Co: ${card['Grading Company'] || 'Raw'}
+- Grade: ${card.Grade || 'N/A'}
+- Serial #: ${card['Limited#'] || 'N/A'}
+- Cert #: ${card['Cert/Serial'] || 'N/A'}
+
+**Research Sources (use these as a starting point):**
+${urls.map(u => `- ${u}`).join('\n')}
+${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstructions}\n` : ''}
+
+**Instructions & Logic:**
+
+1.  **Detect Category**: First, determine if the card is 'sports' or 'anime_tcg'.
+2.  **Analyze Data**: Synthesize information from recent sold listings from the provided URLs.
+    - **For TCG/Anime**: Prioritize TCG Republic, CardMarket, and Yahoo Japan Auctions. Use eBay for cross-validation. Normalize JPY and EUR to USD. Account for language variants (English vs. Japanese).
+    - **For Sports**: Prioritize eBay and 130Point. Consider population reports if Cert # is available (low pop = higher value).
+3.  **Pricing Logic & Adjustments**:
+    - Calculate **FMV (Fair Market Value)** as the average of recent, relevant sold listings.
+    - **Rookie Card (Sports)**: Apply a +15% premium to FMV.
+    - **Numbered Cards (Sports)**: Adjust value proportionally (e.g., a /25 card is worth ~2x a /99 card of the same player/set).
+    - **Raw Condition**: If 'Raw', discount value by 20-25% compared to a graded 8 equivalent.
+    - **High Grade**: If Grade >= 9.5, apply a +10-15% premium over a Grade 9.
+    - **TCG Rarity**: Identify rarity (Secret Rare, Alt Art, SR, etc.) and price within that tier's bracket for the set. If no direct sales, use comps from the same rarity tier.
+4.  **Confidence Score**: Generate a confidence score (0-100) based on the number of comps, recency, and source diversity.
+5.  **Reasoning**: Provide a detailed reasoning summary, including a "Category Insight" block with market context.
+6.  **No Data**: If no comps or reasonable comparables exist, YOU MUST return \`"status": "NO_DATA"\`.
+
+**JSON Output Structure (Strictly Adhere):**
+\`\`\`json
+{
+  "status": "SUCCESS" | "NO_DATA" | "ERROR",
+  "category": "sports" | "anime_tcg",
+  "confidence": <number (0-100)>,
+  "pricing": {
+    "fmv_usd": <number | null>
+  },
+  "research": {
+    "source_urls": ["<url1>", "<url2>", ...],
+    "reasoning": "<string: Detailed summary>",
+    "category_insight": "<string: Market context>"
+  }
+}
+\`\`\`
+`;
             try {
                 const model = 'gemini-2.5-flash-preview-05-20';
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-                
-                const prompt = `You are a pricing analyst for Cook’s Collectibles. Your job is to produce strict JSON only (no prose outside the JSON) with fair market value (FMV), suggested show sticker, floor price, and real sold-comp links for a single trading card.
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+                const payload = { contents: [{ parts: [{ text: prompt }] }] };
 
-// --- INPUTS ---
-CARD:
-year: ${card.Year || ''}
-set: ${card.Set || ''}
-subset: ${card.Subset || ''}
-player: ${card.Player || ''}
-cardNumber: ${card['Card#'] || ''}
-parallel: ${card.Parallel || ''}
-serial: ${card['Limited#'] || ''}
-gradingCompany: ${card['Grading Company'] || 'Raw'}
-grade: ${card.Grade || ''}
-frontImageUrl: ${card.FrontPhoto?.[0]?.url || ''}
-backImageUrl: ${card.BackPhoto?.[0]?.url || ''}
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
 
-PRICING_POLICY:
-dealerFloorLossPct: 0.30
-stickerPremiumPct: 0.08
-usdToTHB: ${THB_CONVERSION_RATE}
-
-SEARCH_HINT: ${reasoning || ''}
-// --- END INPUTS ---
-
-
-// --- RULES ---
-1.  **Match Priority**: Match the exact card first: year → set → subset → parallel/color → serial (/###) → card # → auto/mem → grader/grade.
-2.  **Sold Comps Only**: Use only sold comps (not asking prices). Priority order: eBay sold/completed → major auction houses/marketplaces.
-3.  **Time Window**: last 180 days. If fewer than 3 valid comps, extend to 365 days. If still thin, allow near-matches with clear "approx" flags and penalties.
-4.  **Validate Links**:
-    * eBay links must be canonical: https://www.ebay.com/itm/<ITEM_ID> (no extra query params).
-    * Exclude search result pages, stores, or links without a valid item id.
-5.  **Clean Comps**:
-    * Drop mismatches (wrong year/set/player/parallel/serial/auto).
-    * Keep graded vs raw consistent with the subject; if you must mix, apply penalties and mark approx: true.
-    * Remove outliers (outside 10th–90th percentile or |z| > 2).
-6.  **Compute FMV**:
-    * Calculate P25, Median, P75 and a simple recency-weighted average (WA).
-    * FMV_USD = clamp(WA, P25…P75). If too few comps, use median or best available estimate.
-7.  **Grade Adjustments** (only if you must mix):
-    * Rough modern baseline: PSA10 ≈ 1.0× (anchor), PSA9 ≈ 0.55–0.75× of PSA10, PSA8 ≈ 0.35–0.55× of PSA10.
-    * Cross-grader liquidity discount vs PSA: SGC/CGC 0.9–1.0×, BGS 0.9–1.0×, SQC 0.8–0.9×.
-    * When applied, explain it briefly in justification.
-8.  **Sticker & Floor Pricing**:
-    * StickerUSD = clamp(FMV_USD × (1 + stickerPremiumPct), P25_USD×0.95 … P75_USD×1.15) then round to friendly steps ($5 if ≥100; $2 if ≥50; $1 otherwise).
-    * FloorUSD = FMV_USD × (1 – dealerFloorLossPct) and round to same steps.
-    * Convert to THB and round to ฿50 steps.
-9.  **Image Use**: If images are provided, use them to confirm details. If images contradict text inputs, prefer the image and mention the correction in warnings.
-10. **Output Format**: Output only the strict JSON defined below. No backticks, no extra text. Include a short human-readable justification string and return 3–6 top-quality links.
-
-// --- JSON OUTPUT STRUCTURE (RETURN ONLY THIS) ---
-{
-  "card": {
-    "year": "...", "set": "...", "subset": "...", "player": "...", "cardNumber": "...", "parallel": "...", "serial": "...", "gradingCompany": "...", "grade": "...", "imageUsed": true
-  },
-  "bucket": { "parallel": "...", "serial": "...", "note": "exact | approx" },
-  "sold": [
-    { "url": "https://www.ebay.com/itm/###########", "title": "...", "priceUSD": 0, "date": "YYYY-MM-DD", "source": "ebay", "approx": false, "grader": "PSA|BGS|SGC|CGC|SQC|Raw", "grade": "10|9.5|9|8|raw", "serialMatch": true }
-  ],
-  "stats": { "count": 0, "P25_USD": 0, "MED_USD": 0, "P75_USD": 0, "WA_USD": 0, "FMV_USD": 0, "confidence": "low | medium | high" },
-  "pricing": { "stickerUSD": 0, "floorUSD": 0, "stickerTHB": 0, "floorTHB": 0 },
-  "links": [ "https://www.ebay.com/itm/###########" ],
-  "justification": "Short paragraph explaining comp selection, removals, any grade/parallel penalties, and how FMV/sticker/floor were derived.",
-  "warnings": [ "Any caveats (e.g., used near-match comps due to scarcity, images contradicted text, etc.)" ]
-}`;
-
-                const payload = { 
-                    contents: [{ parts: [{ text: prompt }] }],
-                    tools: [{ "google_search": {} }]
-                };
-
-                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    const errorMessage = errorData.error?.message || `HTTP Error: ${response.status} ${response.statusText}`;
-                    if (response.status === 400) {
-                        throw new Error(`Bad Request (400). Please check if your Gemini API Key is correct and enabled.`);
-                    }
-                    throw new Error(errorMessage);
+                    const errorData = await response.json();
+                    throw new Error(`Gemini API error (${response.status}): ${errorData.error?.message || 'Unknown error'}`);
                 }
 
-                const data = await response.json();
-                
-                if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
-                    throw new Error("Invalid response structure from Gemini API.");
+                const result = await response.json();
+                const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!textResponse) {
+                    throw new Error("Empty response from Gemini.");
                 }
 
-                const textResponse = data.candidates[0].content.parts[0].text;
-                
                 const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
                 if (!jsonMatch) {
-                    throw new Error("Could not find a valid JSON object in the Gemini response.");
-                }
-                try {
-                    return JSON.parse(jsonMatch[0]);
-                } catch (e) {
-                    console.error("Failed to parse JSON from Comps API:", jsonMatch[0]);
-                    throw new Error("Gemini Comps returned malformed JSON.");
+                    console.error("[COMPS] Gemini raw response (no JSON found):", textResponse);
+                    throw new Error("Could not parse JSON from Gemini response.");
                 }
 
+                const parsedJson = JSON.parse(jsonMatch[0]);
+                console.log("[COMPS] Gemini Parsed JSON:", parsedJson);
+                return parsedJson;
+
             } catch (error) {
-                console.error("Full Gemini Error:", error);
-                throw new Error(`Gemini API call failed. ${error.message}`);
+                console.error("[COMPS] Full Gemini Error:", error);
+                return {
+                    status: "ERROR",
+                    research: { reasoning: `An error occurred while contacting the pricing API: ${error.message}` }
+                };
             }
         }
 
-        async function executeRunComps(card, reasoning = null) {
+        /**
+         * Main function to orchestrate the comps process.
+         * @param {object} card - The card object.
+         * @param {string|null} manualInstructions - Optional user-provided instructions.
+         */
+        async function executeRunComps(card, manualInstructions = null) {
             const modal = document.getElementById('run-comps-modal');
             const progressDiv = document.getElementById('comps-progress');
             const resultsDiv = document.getElementById('comps-results');
-            const { geminiApiKey } = getCredentials();
-
-            modal.classList.add('show');
+            const modalTitle = document.getElementById('comps-modal-title');
+            
+            modalTitle.textContent = `Running Comps for ${card.Player}...`;
             resultsDiv.classList.add('hidden');
-            progressDiv.innerHTML = '<div class="loader"></div>';
+            progressDiv.classList.remove('hidden');
+            modal.classList.add('show');
+
+            const steps = [
+                "Connecting to eBay & TCG Databases...",
+                "Connecting to SportscardMarket / 130Point...",
+                "Connecting to PSA / BGS / CGC databases...",
+                "Analyzing results and calculating fair value..."
+            ];
             
-            const addProgressStep = (text) => {
-                const p = document.createElement('p');
-                p.className = 'text-gray-600 dark:text-gray-300 text-center mt-2';
-                p.textContent = text;
-                progressDiv.appendChild(p);
-            };
-            addProgressStep(`Starting comps for ${card.Player}...`);
+            progressDiv.innerHTML = `<div class="flex justify-center"><div class="loader"></div></div>`;
+            const statusContainer = document.createElement('div');
+            statusContainer.className = 'mt-4 text-center space-y-1';
+            progressDiv.appendChild(statusContainer);
             
-            let compResults;
-            if (geminiApiKey) {
-                try {
-                    addProgressStep('Connecting to Gemini for SOLD comps...');
-                    if(reasoning) addProgressStep('Applying your feedback...');
-                    compResults = await getGeminiComps(card, geminiApiKey, reasoning);
-                    addProgressStep('Comp analysis received.');
-                    progressDiv.innerHTML = ''; // Clear loader
-                } catch(error) {
-                    console.error("Run Comps Error:", error);
-                    showToast(`Live comps failed: ${error.message}. Using mock data.`, 'error');
-                    progressDiv.innerHTML = '';
-                    addProgressStep('Live comps failed. Generating mock data...');
-                    compResults = generateMockComps();
+            let stepIndex = 0;
+            const interval = setInterval(() => {
+                if (stepIndex < steps.length) {
+                    const p = document.createElement('p');
+                    p.className = 'text-gray-500 dark:text-gray-400';
+                    p.textContent = steps[stepIndex];
+                    statusContainer.appendChild(p);
+                    stepIndex++;
+                } else {
+                    clearInterval(interval);
                 }
-            } else {
-                addProgressStep('No Gemini key found. Using mock data...');
-                progressDiv.innerHTML = '';
-                compResults = generateMockComps();
+            }, 1200);
+
+            try {
+                const compData = await getGeminiComps(card, manualInstructions);
+                clearInterval(interval);
+                
+                if (compData.status === "SUCCESS" && compData.pricing?.fmv_usd) {
+                    displayCompsResults(card, compData);
+                } else if (compData.status === "NO_DATA") {
+                    displayNoCompsFound(card);
+                } else {
+                    throw new Error(compData.research?.reasoning || "Failed to get a valid pricing structure.");
+                }
+
+            } catch (error) {
+                clearInterval(interval);
+                console.error("[COMPS] executeRunComps failed:", error);
+                displayCompsError(error.message);
             }
-            
-            displayCompsResults(card, compResults);
         }
 
-        function generateMockComps() {
-            const fmv = (Math.random() * 50) + 5;
-            const sticker = fmv * 1.08;
-            return {
-                card: { year: "2023", set: "Mock Set", player: "Mock Player", imageUsed: false },
-                bucket: { note: "approx" },
-                sold: [
-                    { url: "https://www.ebay.com/itm/000000000000", title: "Mock Sale 1", priceUSD: fmv + 2, date: "2025-10-01", source: "ebay", approx: true },
-                    { url: "https://www.ebay.com/itm/111111111111", title: "Mock Sale 2", priceUSD: fmv - 2, date: "2025-09-15", source: "ebay", approx: true }
-                ],
-                stats: { count: 2, P25_USD: fmv-2, MED_USD: fmv, P75_USD: fmv+2, WA_USD: fmv, FMV_USD: fmv, confidence: "low" },
-                pricing: { stickerUSD: sticker, floorUSD: fmv * 0.7, stickerTHB: Math.round((sticker * THB_CONVERSION_RATE)/50)*50, floorTHB: Math.round((fmv * 0.7 * THB_CONVERSION_RATE)/50)*50 },
-                links: ["https://www.ebay.com/itm/000000000000", "https://www.ebay.com/itm/111111111111"],
-                justification: "Using mock data due to an API error or missing API key. Prices are randomized.",
-                warnings: ["This is not real data."]
+        /**
+         * Displays the results in the modal if comps are found.
+         * @param {object} card - The card object.
+         * @param {object} compData - The structured data from Gemini.
+         */
+        function displayCompsResults(card, compData) {
+            const { pricing, research, confidence, category } = compData;
+            const resultsDiv = document.getElementById('comps-results');
+            const progressDiv = document.getElementById('comps-progress');
+            document.getElementById('comps-modal-title').textContent = 'Comps Analysis Complete!';
+            
+            const fmvUSD = pricing.fmv_usd || 0;
+            const fmvTHB = fmvUSD * THB_CONVERSION_RATE;
+            const groundFloorTHB = fmvTHB * 0.8;
+            const ceilingTHB = fmvTHB * 1.2;
+            const suggestedStickerTHB = Math.round((ceilingTHB * 0.95) / 50) * 50;
+            
+            const linksHTML = research.source_urls && research.source_urls.length > 0 
+                ? research.source_urls.slice(0, 4).map(url => `<li><a href="${url}" target="_blank" class="text-blue-500 hover:underline block truncate">${url}</a></li>`).join('')
+                : '<p class="text-sm text-gray-500">No direct research links provided.</p>';
+            
+            resultsDiv.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Left Side: Pricing -->
+                    <div class="space-y-4">
+                        <div class="bg-green-50 dark:bg-green-900/50 border border-green-500 rounded-lg p-4 text-center">
+                            <p class="font-semibold text-green-800 dark:text-green-300">Suggested Sticker Price</p>
+                            <p class="text-4xl font-bold text-green-600 dark:text-green-400">${formatCurrency(suggestedStickerTHB)}</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 text-center">
+                            <div class="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg">
+                                <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Ground Floor</p>
+                                <p class="font-bold text-lg">${formatCurrency(groundFloorTHB)}</p>
+                            </div>
+                            <div class="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg">
+                                <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Ceiling</p>
+                                <p class="font-bold text-lg">${formatCurrency(ceilingTHB)}</p>
+                            </div>
+                        </div>
+                        <div class="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg text-center">
+                             <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Fair Market Value (FMV)</p>
+                             <p class="font-bold text-lg">${formatCurrency(fmvUSD, 'USD')} (≈ ${formatCurrency(fmvTHB)})</p>
+                        </div>
+                        <div class="bg-blue-50 dark:bg-blue-900/50 p-3 rounded-lg text-center">
+                            <p class="text-sm font-medium text-blue-500 dark:text-blue-400">Confidence Score</p>
+                            <p class="font-bold text-lg text-blue-700 dark:text-blue-300">${confidence}%</p>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Research -->
+                    <div class="space-y-4">
+                        <div>
+                            <h5 class="font-semibold text-gray-700 dark:text-gray-300 mb-1">Research Links</h5>
+                            <ul class="list-disc list-inside space-y-1 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-md border dark:border-gray-700">
+                                ${linksHTML}
+                            </ul>
+                        </div>
+                        <div>
+                            <h5 class="font-semibold text-gray-700 dark:text-gray-300 mb-1">Reasoning</h5>
+                            <div class="bg-gray-50 dark:bg-gray-800/50 p-3 rounded-md border dark:border-gray-700 text-sm space-y-2">
+                                <p>${research.reasoning || 'No reasoning provided.'}</p>
+                                ${research.category_insight ? `<p class="italic border-t dark:border-gray-600 pt-2 mt-2"><strong>Category Insight:</strong> ${research.category_insight}</p>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-6 border-t dark:border-gray-700 pt-4">
+                    <h4 class="font-bold text-lg">Refine or Save</h4>
+                     <textarea id="manual-recomp-instructions" class="w-full rounded-md p-2 mt-2 border-gray-300 dark:border-gray-600" placeholder="Disagree? Provide new instructions... e.g., 'Those are base cards, this is a refractor.'"></textarea>
+                    <div class="flex justify-between items-center mt-2">
+                        <button id="manual-recomp-btn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded">Re-Comp with Instructions</button>
+                        <div class="flex items-center gap-4">
+                             <input id="final-sticker-price" type="number" step="10" class="block w-48 rounded-md p-2 border-gray-300 dark:border-gray-600" value="${suggestedStickerTHB || 0}">
+                             <select id="final-location-select" class="block w-48 rounded-md p-2 border-gray-300 dark:border-gray-600"></select>
+                             <button id="comps-accept-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const locations = ["Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Storage Box 1", "INTAKE"];
+            const locationSelect = document.getElementById('final-location-select');
+            locationSelect.innerHTML = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+            
+            progressDiv.classList.add('hidden');
+            resultsDiv.classList.remove('hidden');
+
+            document.getElementById('manual-recomp-btn').addEventListener('click', () => {
+                const instructions = document.getElementById('manual-recomp-instructions').value;
+                if (!instructions.trim()) {
+                    showToast("Please provide some instructions to re-comp.", 'error');
+                    return;
+                }
+                executeRunComps(card, instructions); 
+            });
+
+            document.getElementById('comps-accept-btn').onclick = async () => {
+                const finalSticker = parseFloat(document.getElementById('final-sticker-price').value);
+                const finalLocation = document.getElementById('final-location-select').value;
+                const originalSticker = card['Current Sticker'] || null;
+
+                const fieldsToUpdate = {
+                    'Current Sticker': finalSticker,
+                    'Location': finalLocation,
+                    'Comp Notes': `[${category}, ${confidence}%] FMV: $${fmvUSD.toFixed(2)} USD. ${research.reasoning}`,
+                };
+                if (originalSticker) {
+                    fieldsToUpdate['Original Sticker'] = originalSticker;
+                }
+
+                try {
+                    const acceptBtn = document.getElementById('comps-accept-btn');
+                    acceptBtn.disabled = true;
+                    acceptBtn.textContent = 'Saving...';
+                    await airtableFetch('PATCH', `/${card.id}`, { fields: fieldsToUpdate, typecast: true });
+                    
+                    const recordIndex = state.records.findIndex(r => r.id === card.id);
+                    if (recordIndex !== -1) { state.records[recordIndex] = { ...state.records[recordIndex], ...fieldsToUpdate }; }
+                    if (state.selectedCard?.id === card.id) { state.selectedCard = { ...state.selectedCard, ...fieldsToUpdate }; }
+                    
+                    document.getElementById('run-comps-modal').classList.remove('show');
+                    showToast('Card updated successfully!');
+                    
+                    if (state.currentView === 'card-detail') {
+                        initCardDetail(card.id);
+                    }
+                } catch (error) {
+                    showToast(`Failed to save: ${error.message}`, 'error');
+                }
             };
         }
         
-        function displayCompsResults(card, compResults) {
+        function displayNoCompsFound(card) {
             const resultsDiv = document.getElementById('comps-results');
-            const { pricing, stats, sold, justification, warnings, links } = compResults;
-
-            const locations = [
-                "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
-                "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
-                "HG Safe", "Home Gallery Cabinet 1", "Raw 100–300", "Raw 300–1K",
-                "Raw Premium 1K+", "Raw Anime 300+", "Storage Box 6"
-            ];
-            const locationOptions = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
-            
-            const warningsHTML = warnings && warnings.length > 0
-                ? `<div class="bg-yellow-100 dark:bg-yellow-900/50 border border-yellow-400 text-yellow-800 dark:text-yellow-300 px-4 py-3 rounded-md" role="alert">
-                      <strong class="font-bold">Heads up!</strong>
-                      <ul class="list-disc list-inside mt-1">${warnings.map(w => `<li>${w}</li>`).join('')}</ul>
-                   </div>`
-                : '';
-
-            const soldCompsHTML = sold && sold.length > 0
-                ? sold.map(s => `
-                    <tr class="border-t border-gray-200 dark:border-gray-700">
-                        <td class="py-2 px-3 text-sm"><a href="${s.url}" target="_blank" class="text-blue-500 hover:underline">${s.title}</a></td>
-                        <td class="py-2 px-3 text-sm text-center">${s.grader || 'N/A'} ${s.grade || ''}</td>
-                        <td class="py-2 px-3 text-sm text-center">${s.date}</td>
-                        <td class="py-2 px-3 text-sm text-right font-semibold">${formatCurrency(s.priceUSD, 'USD')}</td>
-                    </tr>`).join('')
-                : `<tr><td colspan="4" class="py-4 text-center text-gray-500">No sold comps found.</td></tr>`;
+            const progressDiv = document.getElementById('comps-progress');
+            document.getElementById('comps-modal-title').textContent = 'Comps Analysis Complete';
 
             resultsDiv.innerHTML = `
-                <h4 class="font-bold text-lg">Comps Analysis Complete</h4>
-                ${warningsHTML}
-                <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                     <div class="bg-green-100 dark:bg-green-900/50 border-2 border-green-500 rounded-lg p-4 text-center">
-                        <p class="font-medium text-green-800 dark:text-green-300">Suggested Sticker Price</p>
-                        <p class="text-4xl font-bold text-green-600 dark:text-green-400">${formatCurrency(pricing.stickerTHB, 'THB')}</p>
-                        <p class="text-sm text-gray-500">${formatCurrency(pricing.stickerUSD, 'USD')}</p>
-                    </div>
-                     <div class="bg-red-100 dark:bg-red-900/50 border-2 border-red-500 rounded-lg p-4 text-center">
-                        <p class="font-medium text-red-800 dark:text-red-300">Dealer Floor Price</p>
-                        <p class="text-4xl font-bold text-red-600 dark:text-red-400">${formatCurrency(pricing.floorTHB, 'THB')}</p>
-                        <p class="text-sm text-gray-500">${formatCurrency(pricing.floorUSD, 'USD')}</p>
-                    </div>
-                </div>
-                <div class="mt-4 text-center text-sm">
-                    Based on FMV of <strong class="font-semibold">${formatCurrency(stats.FMV_USD, 'USD')}</strong> with <strong class="capitalize">${stats.confidence || 'N/A'}</strong> confidence.
+                <div class="text-center p-8 bg-yellow-50 dark:bg-yellow-900/50 rounded-lg border-2 border-dashed border-yellow-400 dark:border-yellow-700">
+                    <p class="text-2xl font-bold text-yellow-700 dark:text-yellow-300">⚠️</p>
+                    <h4 class="text-xl font-bold mt-2">No Comps Found</h4>
+                    <p class="mt-2 text-gray-600 dark:text-gray-400">The card cannot be comped automatically. Manual research is required.</p>
                 </div>
 
-                <div class="mt-6">
-                    <h5 class="font-semibold mb-2">Justification</h5>
-                    <div class="max-h-24 overflow-y-auto border rounded-md p-3 bg-gray-50 dark:bg-gray-800 text-sm">
-                        <p>${justification || 'No justification provided.'}</p>
-                    </div>
-                </div>
-                
-                <div class="mt-6">
-                    <h5 class="font-semibold mb-2">Sold Comps Used (${stats.count || 0})</h5>
-                    <div class="max-h-60 overflow-y-auto border rounded-md bg-gray-50 dark:bg-gray-800">
-                        <table class="min-w-full">
-                            <thead class="bg-gray-200 dark:bg-gray-700"><tr>
-                                <th class="py-2 px-3 text-left text-xs font-medium uppercase">Title</th>
-                                <th class="py-2 px-3 text-center text-xs font-medium uppercase">Grade</th>
-                                <th class="py-2 px-3 text-center text-xs font-medium uppercase">Date</th>
-                                <th class="py-2 px-3 text-right text-xs font-medium uppercase">Price</th>
-                            </tr></thead>
-                            <tbody>${soldCompsHTML}</tbody>
-                        </table>
+                <div class="mt-6 border-t dark:border-gray-700 pt-4">
+                    <h4 class="font-bold text-lg">Manual Re-Comp</h4>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                        Provide additional instructions, suggest comparables, or add your own research links to try again.
+                    </p>
+                    <textarea id="manual-recomp-instructions" class="w-full rounded-md p-2 border-gray-300 dark:border-gray-600" placeholder="e.g., 'This is a rare refractor, try searching for 2023 Topps Chrome Haaland refractors instead of the base card.' or 'Try this comp: https://www.ebay.com/itm/...'"></textarea>
+                    <div class="flex justify-end mt-2">
+                        <button id="manual-recomp-btn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded">Re-Comp with Instructions</button>
                     </div>
                 </div>
 
-                <hr class="my-6 border-gray-200 dark:border-gray-700"/>
-                <div class="space-y-2">
-                    <h4 class="font-bold text-lg">Disagree? Refine the result.</h4>
-                    <textarea id="recomp-reason" class="block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700" placeholder="e.g., this is a refractor parallel, comps are for the wrong grade..."></textarea>
-                    <button id="recomp-btn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-md">Re-Comp with Feedback</button>
-                </div>
-
-                <hr class="my-6 border-gray-200 dark:border-gray-700"/>
-
-                <div id="comps-action-form" class="space-y-4">
-                    <div>
-                        <label for="new-current-sticker" class="block text-sm font-medium">New Current Sticker (THB)</label>
-                        <input id="new-current-sticker" type="number" step="10" class="mt-1 block w-full rounded-md p-2" value="${pricing.stickerTHB || 0}">
+                 <div class="mt-6 border-t dark:border-gray-700 pt-4">
+                    <h4 class="font-bold text-lg">Set Manual Price</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 items-end">
+                        <div>
+                            <label for="final-sticker-price" class="block text-sm font-medium">Final Sticker Price (THB)</label>
+                            <input id="final-sticker-price" type="number" step="10" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600" value="0">
+                        </div>
+                        <div>
+                            <label for="final-location-select" class="block text-sm font-medium">Set Location</label>
+                            <select id="final-location-select" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600">
+                            </select>
+                        </div>
                     </div>
-                     <div>
-                        <label for="new-location-select" class="block text-sm font-medium">Location</label>
-                        <select id="new-location-select" class="mt-1 block w-full rounded-md p-2">
-                            ${locationOptions}
-                            <option value="__addNew__">Add New Location...</option>
-                        </select>
-                        <input id="new-location-manual" type="text" class="mt-2 hidden w-full rounded-md p-2" placeholder="Enter new location name">
+                    <div class="flex justify-end mt-4">
+                         <button id="comps-accept-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded">Save</button>
                     </div>
                 </div>
-                <div class="flex justify-end space-x-4 mt-6">
-                    <button id="comps-cancel-btn" class="bg-gray-200 dark:bg-gray-600 font-bold py-2 px-4 rounded">Cancel</button>
-                    <button id="comps-accept-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Update & Save</button>
-                </div>`;
-            resultsDiv.classList.remove('hidden');
+            `;
+             progressDiv.classList.add('hidden');
+             resultsDiv.classList.remove('hidden');
 
-            document.getElementById('new-location-select').addEventListener('change', e => {
-                document.getElementById('new-location-manual').classList.toggle('hidden', e.target.value !== '__addNew__');
-            });
-            
-            document.getElementById('recomp-btn').onclick = () => {
-                const reason = document.getElementById('recomp-reason').value;
-                if (!reason) {
-                    showToast('Please provide a reason to refine the search.', 'error');
+             const locations = ["Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Storage Box 1", "INTAKE"];
+             const locationSelect = document.getElementById('final-location-select');
+             locationSelect.innerHTML = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+
+            document.getElementById('manual-recomp-btn').addEventListener('click', () => {
+                const instructions = document.getElementById('manual-recomp-instructions').value;
+                if (!instructions.trim()) {
+                    showToast("Please provide some instructions to re-comp.", 'error');
                     return;
                 }
-                executeRunComps(card, reason);
-            };
+                executeRunComps(card, instructions); 
+            });
 
-            document.getElementById('comps-cancel-btn').onclick = () => document.getElementById('run-comps-modal').classList.remove('show');
-            document.getElementById('comps-accept-btn').onclick = async () => {
-                const locationSelect = document.getElementById('new-location-select');
-                const newLocation = locationSelect.value === '__addNew__' 
-                    ? document.getElementById('new-location-manual').value 
-                    : locationSelect.value;
-                
-                const compNotes = `Links:\n${(links || []).join('\n')}\n\nJustification: ${justification || 'No justification provided.'}`;
-
+             document.getElementById('comps-accept-btn').onclick = async () => {
+                const finalSticker = parseFloat(document.getElementById('final-sticker-price').value);
+                const finalLocation = document.getElementById('final-location-select').value;
                 const fieldsToUpdate = {
-                    'Current Sticker': parseFloat(document.getElementById('new-current-sticker').value),
-                    'Location': newLocation,
-                    'Suggested Sticker': pricing.stickerTHB,
-                    'Comp Notes': compNotes,
+                    'Current Sticker': finalSticker,
+                    'Location': finalLocation,
+                    'Comp Notes': 'Manual price set - no automatic comps found.',
                 };
-                try {
-                    await airtableFetch('PATCH', `/${card.id}`, { fields: fieldsToUpdate, typecast: true });
-                    const recordIndex = state.records.findIndex(r => r.id === card.id);
-                    if (recordIndex !== -1) state.records[recordIndex] = { ...state.records[recordIndex], ...fieldsToUpdate };
-                    if (state.selectedCard?.id === card.id) state.selectedCard = { ...state.selectedCard, ...fieldsToUpdate };
-                    document.getElementById('run-comps-modal').classList.remove('show');
-                    showToast('Comps saved and card updated!');
-                    if (state.currentView === 'audit') initAudit(state.auditSelectedLocation, state.auditCurrentPage);
-                    if (state.currentView === 'card-detail') initCardDetail(card.id);
-                } catch (error) {
-                    showToast('Failed to save comps.', 'error');
-                }
-            };
+
+                 try {
+                     await airtableFetch('PATCH', `/${card.id}`, { fields: fieldsToUpdate, typecast: true });
+                     showToast('Card updated manually!');
+                     document.getElementById('run-comps-modal').classList.remove('show');
+                     if (state.currentView === 'card-detail') { initCardDetail(card.id); }
+                 } catch (error) {
+                    showToast(`Failed to save: ${error.message}`, 'error');
+                 }
+             }
         }
+
+        function displayCompsError(errorMessage) {
+            const resultsDiv = document.getElementById('comps-results');
+            const progressDiv = document.getElementById('comps-progress');
+            document.getElementById('comps-modal-title').textContent = 'An Error Occurred';
+
+            resultsDiv.innerHTML = `
+                 <div class="text-center p-8 bg-red-50 dark:bg-red-900/50 rounded-lg border-2 border-dashed border-red-400 dark:border-red-700">
+                    <p class="text-2xl font-bold text-red-700 dark:text-red-300">!</p>
+                    <h4 class="text-xl font-bold mt-2">Pricing Failed</h4>
+                    <p class="mt-2 text-gray-600 dark:text-gray-400">An error occurred while trying to price the card.</p>
+                    <div class="mt-4 text-sm text-left bg-gray-100 dark:bg-gray-800 p-2 rounded overflow-x-auto">
+                        <code>${errorMessage}</code>
+                    </div>
+                </div>
+            `;
+            progressDiv.classList.add('hidden');
+            resultsDiv.classList.remove('hidden');
+        }
+
+        /**
+         * Self-test function to verify the pricing module's functionality.
+         */
+        async function RUN_SELFTEST() {
+            console.log("✅ SELF-TEST REQUIREMENT: STARTING SELF-TEST ✅");
+            const testCases = [
+                { name: "Sports (graded)", data: { Player: "Erling Haaland", Year: "2023", Set: "Topps Chrome", "Card#": "1", "Grading Company": "PSA", Grade: "9" } },
+                { name: "Sports (raw)", data: { Player: "Bukayo Saka", Year: "2021", Set: "Panini Prizm", "Card#": "1" } },
+                { name: "Anime / Pokémon", data: { Player: "Charizard VMAX", Year: "2022", Set: "Pokémon Sword & Shield", "Grading Company": "PSA", Grade: "10" } },
+                { name: "No comps", data: { Player: "Jim Boeheim", Year: "2025", Set: "Leaf Metal Autographs", 'Limited#': '1/1', "Grading Company": "PSA" } },
+                { name: "Missing data", data: { Player: "Incomplete Entry" } },
+                { name: "Pokémon Japanese SR", data: { Player: "ピカチュウ", Year: "2021", Set: "Pokémon VMAX Climax", Parallel: "SR"}},
+                { name: "Weiss Schwarz Foil", data: { Player: "Asuna", Year: "2020", Set: "Weiss Schwarz Sword Art Online", Parallel: "Foil"}},
+                { name: "Low-pop PSA 10", data: { Player: "LeBron James", Year: "2003", Set: "Topps Chrome", "Card#": "111", "Grading Company": "PSA", Grade: "10"}},
+                { name: "Raw numbered soccer", data: { Player: "Lionel Messi", Year: "2022", Set: "Panini Prizm World Cup", 'Limited#': '/25'}}
+            ];
+
+            for (const test of testCases) {
+                console.log(`--- Running Test Case: ${test.name} ---`);
+                try {
+                    console.log("[TEST] Simulating 'Run Comps' click...");
+                    const modal = document.getElementById('run-comps-modal');
+                    modal.classList.add('show');
+                    document.getElementById('comps-progress').classList.remove('hidden');
+                    document.getElementById('comps-results').classList.add('hidden');
+                    console.log("[TEST] Loading UI... OK");
+
+                    const result = await getGeminiComps(test.data);
+
+                    if (!result || !result.status) {
+                        throw new Error("Result object is invalid or missing status.");
+                    }
+                    
+                    if (test.name === "No comps") {
+                        if (result.status === "NO_DATA") {
+                            console.log("[TEST] No-data case returned 'NO_DATA' status... OK");
+                        } else {
+                             console.warn(`Expected 'NO_DATA' status but got '${result.status}'. This might be ok if a speculative price was found.`);
+                        }
+                    } else if (test.name === "Missing data") {
+                         if (result.status) {
+                            console.log(`[TEST] Missing data case returned a valid status ('${result.status}')... OK`);
+                         } else {
+                            throw new Error("Missing data case failed to return a valid status.");
+                         }
+                    }
+                    else {
+                        if (result.status === "SUCCESS") {
+                            console.log("[TEST] Returned 'SUCCESS' status... OK");
+                            if (typeof result.pricing.fmv_usd === 'number') {
+                                console.log(`[TEST] FMV is a number (${result.pricing.fmv_usd})... OK`);
+                            } else {
+                                throw new Error(`FMV is not a number: ${result.pricing.fmv_usd}`);
+                            }
+                            if (Array.isArray(result.research.source_urls) && result.research.source_urls.length > 0) {
+                                console.log(`[TEST] Found ${result.research.source_urls.length} research links... OK`);
+                            } else {
+                                console.warn("[TEST] No research URLs returned, but might be acceptable.");
+                            }
+                            if (typeof result.research.reasoning === 'string' && result.research.reasoning.length > 5) {
+                                console.log("[TEST] Reasoning text is present... OK");
+                            } else {
+                                 throw new Error("Reasoning text is missing or too short.");
+                            }
+                        } else {
+                            throw new Error(`Expected 'SUCCESS' status but got '${result.status}'. Reason: ${result.research?.reasoning}`);
+                        }
+                    }
+                    console.log(`--- Test Case '${test.name}' PASSED ---`);
+                } catch (error) {
+                    console.error(`--- ❌ Test Case '${test.name}' FAILED ❌ ---`);
+                    console.error("Error:", error.message);
+                } finally {
+                    document.getElementById('run-comps-modal').classList.remove('show');
+                }
+            }
+             console.log("✅ SELF-TEST REQUIREMENT: SELF-TEST COMPLETE ✅");
+        }
+        window.RUN_SELFTEST = RUN_SELFTEST;
+        
+        // --- PRICING MODULE END ---
+
 
         async function verifyGeminiKey() {
             const { geminiApiKey } = getCredentials();
@@ -1513,7 +1656,6 @@ SEARCH_HINT: ${reasoning || ''}
                 document.getElementById('modal-confirm-btn').textContent = "OK";
                 document.getElementById('modal-cancel-btn').style.display = 'none';
             } finally {
-                 // Reset modal buttons after use
                 document.getElementById('modal-confirm-btn').textContent = "Confirm";
                 document.getElementById('modal-cancel-btn').style.display = 'inline-flex';
             }
@@ -1539,12 +1681,12 @@ SEARCH_HINT: ${reasoning || ''}
         function navigate(view, params = {}) {
             state.currentView = view;
             const contentArea = document.getElementById('content-area');
-            if (!contentArea) return; // Guard against missing element
+            if (!contentArea) return; 
             
             if(params.from) {
                 state.fromView = params.from;
             } else if (view !== 'card-detail' && view !== 'edit-card'){
-                state.fromView = null; // Clear fromView when navigating away from detail/edit
+                state.fromView = null;
             }
 
 
@@ -1568,8 +1710,7 @@ SEARCH_HINT: ${reasoning || ''}
                 <header class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-6">
                     <div class="flex flex-col md:flex-row items-center justify-between">
                         <div class="flex items-center space-x-4">
-                            <img src="https://i.ibb.co/hK2V4FV/sclogo.png" alt="Logo" class="h-12 rounded">
-                            <h1 class="text-2xl font-bold text-gray-800 dark:text-white">Card Inventory System</h1>
+                            <img src="https://i.ibb.co/9mBk8Rq/logo-header-h96.png" alt="Cooks Collectibles Logo" class="h-12 md:h-16 w-auto">
                         </div>
                         <div class="flex items-center space-x-4">
                             <nav id="navigation" class="flex space-x-2 mt-4 md:mt-0">
@@ -1652,7 +1793,7 @@ SEARCH_HINT: ${reasoning || ''}
                         if (state.currentView === 'audit' && state.auditSelectedLocation) {
                             from.params = { location: state.auditSelectedLocation, page: state.auditCurrentPage };
                         } else if (state.currentView === 'audit') {
-                            from.params = {}; // Top-level audit
+                            from.params = {};
                         } else if (state.currentView === 'search') {
                             from.params = { query: state.searchQuery, page: state.searchCurrentPage };
                         }
@@ -1691,8 +1832,8 @@ SEARCH_HINT: ${reasoning || ''}
                     const currentSrc = cardImage.src;
                     const card = state.selectedCard;
                     
-                    if (currentSrc === (card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image')) {
-                        cardImage.src = card.BackPhoto?.[0]?.url;
+                    if (currentSrc.includes(card.FrontPhoto?.[0]?.url)) {
+                        cardImage.src = card.BackPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Back+Image';
                         togglePhotoButton.textContent = 'Show Front';
                     } else {
                         cardImage.src = card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image';
@@ -1745,6 +1886,11 @@ SEARCH_HINT: ${reasoning || ''}
                          const newPage = direction === 'next' ? state.auditCurrentPage + 1 : state.auditCurrentPage - 1;
                         return navigate('audit', { location: state.auditSelectedLocation, page: newPage });
                     }
+                }
+                
+                const compsCancelBtn = e.target.closest('#comps-cancel-btn');
+                if(compsCancelBtn || e.target === document.getElementById('run-comps-modal')) {
+                    document.getElementById('run-comps-modal').classList.remove('show');
                 }
 
                 if (e.target.id === 'modal-confirm-btn' && state._modalConfirmCallback) state._modalConfirmCallback();
@@ -1803,6 +1949,13 @@ SEARCH_HINT: ${reasoning || ''}
                     e.target.value = ''; // Reset file input
                 }
             }
+            
+            async function getGeminiVisionData(frontData, backData) {
+                // This function is a placeholder for your Gemini Vision implementation
+                // It should take base64 image data and return a structured object
+                console.log("getGeminiVisionData called, but is not implemented in this version.");
+                return {};
+            }
 
             document.getElementById('photo-upload-input').addEventListener('change', handlePhotoUpload);
             // Initial load
@@ -1815,4 +1968,8 @@ SEARCH_HINT: ${reasoning || ''}
     </script>
 </body>
 </html>
+
+
+
+
 
