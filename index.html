@@ -1614,6 +1614,46 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
         
         // --- PRICING MODULE END ---
 
+        async function getGeminiVisionData(frontData, backData) {
+            const { geminiApiKey } = getCredentials();
+            if (!geminiApiKey) {
+                throw new Error("A Gemini API Key is required to scan cards.");
+            }
+            const model = 'gemini-2.5-flash-preview-05-20';
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+
+            const prompt = `Analyze these sports card images. First, determine if it's a graded card in a slab (like PSA, SQC, BGS).
+If it IS GRADED, you MUST extract: "Grading Company", the numeric "Grade", and the "Cert/Serial" number. For PSA, this is 7-10 digits on the FRONT. For SQC, this is a number starting with "SN" on the BACK.
+If it is NOT GRADED (a raw card), return null for those three fields.
+Always extract the standard card details: "Player", "Set" (do not include the year in the set name), "Year" (as a four-digit string), "Card#", "Subset", "Parallel", and "Limited#".
+Return ONLY a single, clean JSON object with this exact structure, with null for any value you cannot find:
+{"Player": "string", "Set": "string", "Year": "string", "Card#": "string", "Subset": "string", "Parallel": "string", "Limited#": "string", "Grading Company": "string" or null, "Grade": "string" or null, "Cert/Serial": "string" or null}`;
+            
+            const parts = [{ text: prompt }];
+            if(frontData) {
+                parts.push({ inline_data: { mime_type: frontData.mimeType, data: frontData.base64 } });
+            }
+             if(backData) {
+                parts.push({ inline_data: { mime_type: backData.mimeType, data: backData.base64 } });
+            }
+            
+            const payload = { contents: [{ parts }] };
+
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error(`Gemini Vision API error: ${response.statusText}`);
+            const data = await response.json();
+            
+            if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+                throw new Error("Invalid response structure from Gemini Vision API.");
+            }
+
+            const textResponse = data.candidates[0].content.parts[0].text;
+            const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                throw new Error("Could not find a valid JSON object in the Gemini Vision response.");
+            }
+            return JSON.parse(jsonMatch[0]);
+        }
 
         async function verifyGeminiKey() {
             const { geminiApiKey } = getCredentials();
@@ -1949,13 +1989,6 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
                     e.target.value = ''; // Reset file input
                 }
             }
-            
-            async function getGeminiVisionData(frontData, backData) {
-                // This function is a placeholder for your Gemini Vision implementation
-                // It should take base64 image data and return a structured object
-                console.log("getGeminiVisionData called, but is not implemented in this version.");
-                return {};
-            }
 
             document.getElementById('photo-upload-input').addEventListener('change', handlePhotoUpload);
             // Initial load
@@ -1968,8 +2001,4 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
     </script>
 </body>
 </html>
-
-
-
-
 
