@@ -73,7 +73,7 @@ Notes for Production:
         }
         .modal-content {
             background: white;
-            padding: 2rem;
+            padding: 0; /* Remove padding for full control */
             border-radius: 0.5rem;
             max-width: 500px;
             width: 90%;
@@ -84,6 +84,17 @@ Notes for Production:
         .modal-overlay.show .modal-content {
             transform: scale(1);
         }
+        .modal-content-body {
+            padding: 2rem;
+        }
+        .modal-content-header {
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .dark .modal-content-header {
+             border-bottom-color: #374151;
+        }
+        
         .comps-view .modal-content { max-width: 60rem; } 
         .pagination-btn:disabled {
             opacity: 0.5;
@@ -124,27 +135,33 @@ Notes for Production:
     <!-- Confirmation Modal -->
     <div id="confirmation-modal" class="modal-overlay">
         <div class="modal-content">
-            <h3 id="modal-title" class="text-lg font-bold mb-4">Are you sure?</h3>
-            <div id="modal-body" class="mb-6">This action cannot be undone.</div>
-            <div class="flex justify-end space-x-4">
-                <button id="modal-cancel-btn" class="bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded">Cancel</button>
-                <button id="modal-confirm-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">Confirm</button>
+            <div class="modal-content-header">
+                <h3 id="modal-title" class="text-lg font-bold">Are you sure?</h3>
+            </div>
+            <div class="modal-content-body">
+                <div id="modal-body" class="mb-6">This action cannot be undone.</div>
+                <div class="flex justify-end space-x-4">
+                    <button id="modal-cancel-btn" class="bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded">Cancel</button>
+                    <button id="modal-confirm-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">Confirm</button>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Run Comps Modal -->
     <div id="run-comps-modal" class="modal-overlay comps-view">
-        <div class="modal-content max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center">
+        <div class="modal-content max-w-4xl w-full max-h-[90vh] overflow-y-auto relative">
+             <button id="comps-cancel-btn" class="absolute top-3 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-3xl font-bold z-10">&times;</button>
+            <div class="modal-content-header">
                 <h3 id="comps-modal-title" class="text-xl font-bold">Running Comps...</h3>
-                <button id="comps-cancel-btn" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">&times;</button>
             </div>
-            <div id="comps-progress" class="mt-4">
-                <!-- Progress steps will be injected here -->
-            </div>
-            <div id="comps-results" class="hidden mt-6">
-                <!-- Results will be injected here -->
+            <div class="modal-content-body">
+                <div id="comps-progress" class="mt-4">
+                    <!-- Progress steps will be injected here -->
+                </div>
+                <div id="comps-results" class="hidden">
+                    <!-- Results will be injected here -->
+                </div>
             </div>
         </div>
     </div>
@@ -275,7 +292,58 @@ Notes for Production:
         
         function parseAndRenderCompNotes(notes) {
             if (!notes) return '';
-            return `<p class="text-sm whitespace-pre-wrap">${notes}</p>`;
+
+            const lines = notes.split('\n');
+            const links = [];
+            let justification = '';
+            let isJustificationSection = false;
+
+            for (const line of lines) {
+                if (line.toLowerCase().startsWith('links:')) {
+                    isJustificationSection = false;
+                    continue; // Skip the "Links:" header
+                }
+                if (line.toLowerCase().startsWith('justification:')) {
+                    isJustificationSection = true;
+                    justification += line.substring(14).trim() + '\n'; // Add the rest of the line
+                    continue; // Skip the "Justification:" header
+                }
+                
+                if (isJustificationSection) {
+                    justification += line + '\n';
+                } else if (line.trim().startsWith('http')) {
+                    links.push(line.trim());
+                }
+            }
+            
+            // Fallback for notes that don't follow the format
+            if (links.length === 0 && !justification.trim()) {
+                return `<div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap"><p class="text-sm">${notes}</p></div>`;
+            }
+
+            let html = '';
+            if (links.length > 0) {
+                html += `
+                    <div>
+                        <h5 class="font-semibold text-gray-600 dark:text-gray-400 mb-2">Comp Links</h5>
+                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50">
+                            <ul class="list-disc list-inside space-y-1.5">
+                                ${links.map(link => `<li><a href="${link}" target="_blank" class="text-indigo-500 hover:underline truncate block">${link}</a></li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>`;
+            }
+
+            if (justification.trim()) {
+                html += `
+                    <div class="mt-4">
+                        <h5 class="font-semibold text-gray-600 dark:text-gray-400 mb-2">Justification</h5>
+                        <div class="border rounded-md p-3 bg-gray-50 dark:bg-gray-800/50 whitespace-pre-wrap">
+                        <p class="text-sm">${justification.trim()}</p>
+                        </div>
+                    </div>`;
+            }
+            return html;
         }
 
 
@@ -351,22 +419,22 @@ Notes for Production:
                         <h3 class="text-xl font-bold mb-4">Last 10 Entries</h3>
                         <div class="overflow-x-auto">
                             <table class="min-w-full">
-                                <thead class="bg-gray-200 dark:bg-gray-700">
+                                <thead class="bg-gray-100 dark:bg-gray-700/50">
                                     <tr>
-                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Year</th>
-                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Player</th>
-                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Set</th>
-                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Card #</th>
-                                        <th class="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider">Location</th>
-                                        <th class="px-6 py-4 text-right text-xs font-medium uppercase tracking-wider">Sticker</th>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Year</th>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Player</th>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Set</th>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Card #</th>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Location</th>
+                                        <th class="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider">Sticker</th>
                                     </tr>
                                 </thead>
                                 <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                     ${latest.map(item => `
-                                        <tr class="hover:bg-gray-100 dark:hover:bg-gray-900/50">
+                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                             <td class="px-6 py-5 whitespace-nowrap">${item.Year || ''}</td>
                                             <td class="px-6 py-5 whitespace-nowrap">
-                                                <a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${item.id}">${item.Player || ''}</a>
+                                                <a href="#" class="text-indigo-500 hover:underline view-card-link" data-record-id="${item.id}">${item.Player || ''}</a>
                                             </td>
                                             <td class="px-6 py-5 whitespace-nowrap">${item.Set || ''}</td>
                                             <td class="px-6 py-5 whitespace-nowrap">${item['Card#'] || ''}</td>
@@ -519,41 +587,43 @@ Notes for Production:
             const locationOptions = locations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
 
             const locationField = isUpdate ? `
-                <div class="lg:col-span-2">
+                <div class="col-span-1 lg:col-span-2">
                     <label for="edit-location-select" class="block text-sm font-bold text-gray-700 dark:text-gray-300">Location</label>
-                    <select id="edit-location-select" name="Location" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500">
+                    <select id="edit-location-select" name="Location" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500">
                         ${locationOptions}
                         <option value="__addNew__">Add New Location...</option>
                     </select>
-                    <input id="edit-location-manual" type="text" class="mt-2 hidden w-full rounded-md p-2 border-gray-300 dark:border-gray-600" placeholder="Enter new location name">
+                    <input id="edit-location-manual" type="text" class="mt-2 hidden w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800" placeholder="Enter new location name">
                 </div>
             ` : '';
 
             const contentArea = document.getElementById('content-area');
             contentArea.innerHTML = `
                 <form id="intake-form" data-record-id="${record?.id || ''}" data-mode="${isUpdate ? 'update' : 'create'}">
-                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                        <div class="flex justify-between items-start mb-4">
+                    <div class="p-6 rounded-lg">
+                        <div class="flex justify-between items-start mb-6">
                             <div>
                                 <h2 class="text-3xl font-bold tracking-tight">${title}</h2>
                                 <p class="text-lg text-gray-500 dark:text-gray-400">${isDuplicate ? `Adding a duplicate of ${record.Player}` : (record && record.id ? `${record.Year || ''} ${record.Set || ''}` : `Next Card ID: ${nextCardID}`)}</p>
                             </div>
-                            <a href="#" class="text-blue-500 hover:underline flex-shrink-0 ml-4" data-view="${isUpdate ? 'card-detail' : 'dashboard'}" data-record-id="${record?.id}">&larr; Cancel</a>
+                            <a href="#" class="text-indigo-500 hover:underline flex-shrink-0 ml-4" data-view="${isUpdate ? 'card-detail' : 'dashboard'}" data-record-id="${record?.id}">&larr; Cancel</a>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="md:col-span-1 space-y-6">
-                                <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
-                                    <h4 class="font-bold mb-2">Photos</h4>
-                                    <div class="space-y-4">
+                               <div class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                                    <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3 border-b dark:border-gray-700">
+                                        <h4 class="font-bold">Photos</h4>
+                                    </div>
+                                    <div class="p-4 space-y-4">
                                         <div>
                                             <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Front Photo</label>
-                                            <input name="FrontPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600" value="${record?.FrontPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
+                                            <input name="FrontPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800" value="${record?.FrontPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
                                             <button type="button" data-field="FrontPhoto" class="upload-photo-btn mt-2 w-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 text-sm font-medium py-2 px-4 rounded">Upload Photo</button>
                                         </div>
                                         <div>
                                             <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Back Photo</label>
-                                            <input name="BackPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600" value="${record?.BackPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
+                                            <input name="BackPhoto" type="text" class="photo-url-input mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800" value="${record?.BackPhoto?.[0]?.url || ''}" placeholder="Paste URL or Upload">
                                             <button type="button" data-field="BackPhoto" class="upload-photo-btn mt-2 w-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 text-sm font-medium py-2 px-4 rounded">Upload Photo</button>
                                         </div>
                                     </div>
@@ -561,29 +631,37 @@ Notes for Production:
                             </div>
 
                             <div class="md:col-span-2 space-y-6">
-                               <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
-                                    <h4 class="font-bold mb-2">Card Details</h4>
-                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Player *</label><input name="Player" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Player || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Set *</label><input name="Set" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Set || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Year *</label><input name="Year" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Year || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Card # *</label><input name="Card#" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Card#'] || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Subset</label><input name="Subset" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Subset || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Parallel</label><input name="Parallel" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Parallel || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Limited #</label><input name="Limited#" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Limited#'] || ''}"/></div>
+                               <div class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                                    <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3 border-b dark:border-gray-700">
+                                        <h4 class="font-bold">Card Details</h4>
+                                    </div>
+                                    <div class="p-4">
+                                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Player *</label><input name="Player" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Player || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Set *</label><input name="Set" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Set || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Year *</label><input name="Year" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Year || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Card # *</label><input name="Card#" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Card#'] || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Subset</label><input name="Subset" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Subset || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Parallel</label><input name="Parallel" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Parallel || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Limited #</label><input name="Limited#" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Limited#'] || ''}"/></div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
-                                    <h4 class="font-bold mb-2">Grading, Pricing & Location</h4>
-                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grading Company</label><input name="Grading Company" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Grading Company'] || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grade</label><input name="Grade" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Grade || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Cert/Serial</label><input name="Cert/Serial" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Cert/Serial'] || ''}"/></div>
-                                        <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Current Sticker (THB)</label><input name="Current Sticker" type="number" step="0.01" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Current Sticker'] || ''}"/></div>
-                                        ${locationField}
+                                <div class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                                    <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3 border-b dark:border-gray-700">
+                                        <h4 class="font-bold">Grading, Pricing & Location</h4>
+                                    </div>
+                                    <div class="p-4">
+                                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grading Company</label><input name="Grading Company" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Grading Company'] || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Grade</label><input name="Grade" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Grade || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Cert/Serial</label><input name="Cert/Serial" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Cert/Serial'] || ''}"/></div>
+                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Current Sticker (THB)</label><input name="Current Sticker" type="number" step="0.01" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Current Sticker'] || ''}"/></div>
+                                            ${locationField}
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="pt-4 border-t dark:border-gray-700">
+                                <div class="pt-4">
                                     <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md" id="submit-btn">${isUpdate ? 'Save Changes' : 'Add Card'}</button>
                                 </div>
                             </div>
@@ -743,8 +821,8 @@ Notes for Production:
                     <h3 class="text-xl font-bold">Audit by Location</h3>
                     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         ${sortedLocations.map(([location, count]) => `
-                            <a href="#" class="block p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors audit-location-link" data-location="${location}">
-                                <p class="font-semibold text-lg text-blue-600 dark:text-blue-400">${location}</p>
+                            <a href="#" class="block p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/50 transition-colors audit-location-link" data-location="${location}">
+                                <p class="font-semibold text-lg text-indigo-600 dark:text-indigo-400">${location}</p>
                                 <p class="text-gray-500 dark:text-gray-400">${count} card(s)</p>
                             </a>
                         `).join('')}
@@ -772,23 +850,23 @@ Notes for Production:
                 <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
                     <div class="flex justify-between items-center">
                         <h3 class="text-xl font-bold">Location: ${location}</h3>
-                        <a href="#" class="text-blue-500 hover:underline" data-view="audit">&larr; Back to All Locations</a>
+                        <a href="#" class="text-indigo-500 hover:underline" data-view="audit">&larr; Back to All Locations</a>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                           <thead class="bg-gray-50 dark:bg-gray-700">
+                           <thead class="bg-gray-100 dark:bg-gray-700/50">
                                 <tr>
-                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CardID</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Player</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Set</th>
-                                    <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider">Current Sticker</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">CardID</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Player</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Set</th>
+                                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Current Sticker</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                 ${paginatedRecords.map(rec => `
-                                    <tr>
+                                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td class="px-4 py-4">${rec.CardID}</td>
-                                        <td class="px-4 py-4"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${rec.id}">${rec.Player || ''}</a></td>
+                                        <td class="px-4 py-4"><a href="#" class="text-indigo-500 hover:underline view-card-link" data-record-id="${rec.id}">${rec.Player || ''}</a></td>
                                         <td class="px-4 py-4">${rec.Set || ''}</td>
                                         <td class="px-4 py-4 text-right">${formatCurrency(rec['Current Sticker'])}</td>
                                     </tr>
@@ -879,9 +957,9 @@ Notes for Production:
             const paginatedRecords = records.slice(startIndex, endIndex);
 
             const rows = paginatedRecords.map(r => `
-                <tr class="border-t dark:border-gray-700">
+                <tr class="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td class="px-4 py-3">${r.CardID || ''}</td>
-                    <td class="px-4 py-3"><a href="#" class="text-blue-500 hover:underline view-card-link" data-record-id="${r.id}">${r.Player || ''}</a></td>
+                    <td class="px-4 py-3"><a href="#" class="text-indigo-500 hover:underline view-card-link" data-record-id="${r.id}">${r.Player || ''}</a></td>
                     <td class="px-4 py-3">${r.Set || ''}</td>
                     <td class="px-4 py-3">${r.Location || ''}</td>
                     <td class="px-4 py-3 text-right">${formatCurrency(r['Current Sticker'])}</td>
@@ -891,13 +969,13 @@ Notes for Production:
             out.innerHTML = `
                 <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
                     <table class="min-w-full text-sm">
-                        <thead class="bg-gray-50 dark:bg-gray-700">
+                        <thead class="bg-gray-100 dark:bg-gray-700/50">
                             <tr>
-                                <th class="px-4 py-3 text-left font-medium">CardID</th>
-                                <th class="px-4 py-3 text-left font-medium">Player</th>
-                                <th class="px-4 py-3 text-left font-medium">Set</th>
-                                <th class="px-4 py-3 text-left font-medium">Location</th>
-                                <th class="px-4 py-3 text-right font-medium">Sticker</th>
+                                <th class="px-4 py-3 text-left font-semibold">CardID</th>
+                                <th class="px-4 py-3 text-left font-semibold">Player</th>
+                                <th class="px-4 py-3 text-left font-semibold">Set</th>
+                                <th class="px-4 py-3 text-left font-semibold">Location</th>
+                                <th class="px-4 py-3 text-right font-semibold">Sticker</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -964,43 +1042,47 @@ Notes for Production:
             } else {
                  deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">—</p>`;
             }
-
-
-            const renderDetailRow = (label, value) => {
-                if (value === undefined || value === null || value === '') return '';
-                return `
-                    <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-700">
-                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">${label}</dt>
-                        <dd class="text-base text-right">${value}</dd>
-                    </div>
-                `;
+            
+            const buildDetailRows = (rows) => {
+                return rows.filter(row => row.value !== undefined && row.value !== null && row.value !== '')
+                           .map((row, index) => `
+                            <div class="flex justify-between py-3 px-4 ${index % 2 === 0 ? 'bg-slate-50 dark:bg-gray-800/50' : ''}">
+                                <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">${row.label}</dt>
+                                <dd class="text-base text-right font-medium">${row.value}</dd>
+                            </div>
+                           `).join('');
             };
 
+            const cardInfoRows = [
+                { label: 'Year', value: card.Year },
+                { label: 'Set', value: card.Set },
+                { label: 'Card #', value: card['Card#'] },
+                { label: 'Subset', value: card.Subset },
+                { label: 'Parallel', value: card.Parallel },
+                { label: 'Limited #', value: card['Limited#'] },
+                { label: 'Card ID', value: card.CardID },
+            ];
+            
+            const gradingInfoRows = [
+                { label: 'Company', value: card['Grading Company'] },
+                { label: 'Grade', value: card.Grade },
+                { label: 'Cert/Serial', value: card['Cert/Serial'] },
+            ];
+
+            const cardInfoContent = buildDetailRows(cardInfoRows);
+            const gradingInfoContent = buildDetailRows(gradingInfoRows);
+
             const renderDetailCard = (title, content) => {
-                if (!content.trim()) return '';
+                if (!content || !content.trim()) return '';
                 return `
-                    <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg">
-                        <h4 class="font-bold mb-2">${title}</h4>
+                    <div class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                        <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b dark:border-gray-700">
+                           <h4 class="font-bold">${title}</h4>
+                        </div>
                         <div>${content}</div>
                     </div>
                 `;
             };
-
-            const cardInfoContent = `
-                ${renderDetailRow('Year', card.Year)}
-                ${renderDetailRow('Set', card.Set)}
-                ${renderDetailRow('Card #', card['Card#'])}
-                ${renderDetailRow('Subset', card.Subset)}
-                ${renderDetailRow('Parallel', card.Parallel)}
-                ${renderDetailRow('Limited #', card['Limited#'])}
-                ${renderDetailRow('Card ID', card.CardID)}
-            `;
-
-            const gradingInfoContent = `
-                ${renderDetailRow('Company', card['Grading Company'])}
-                ${renderDetailRow('Grade', card.Grade)}
-                ${renderDetailRow('Cert/Serial', card['Cert/Serial'])}
-            `;
             
             contentArea.innerHTML = `
                 <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
@@ -1009,7 +1091,7 @@ Notes for Production:
                             <h2 class="text-3xl font-bold tracking-tight">${card.Player || 'Unknown Player'}</h2>
                             <p class="text-lg text-gray-500 dark:text-gray-400">${card.Year || ''} ${card.Set || ''}</p>
                         </div>
-                         <a href="#" id="back-link" class="text-blue-500 hover:underline flex-shrink-0 ml-4">${backLinkText}</a>
+                         <a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">${backLinkText}</a>
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1022,15 +1104,15 @@ Notes for Production:
 
                         <div class="md:col-span-2 space-y-6">
                             <div class="grid grid-cols-2 gap-4">
-                                <div class="bg-blue-50 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-center">
-                                    <h4 class="text-sm font-medium text-blue-800 dark:text-blue-300">CURRENT STICKER</h4>
-                                    <p class="text-4xl font-bold text-blue-900 dark:text-blue-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
+                                <div class="bg-indigo-50 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4 text-center">
+                                    <h4 class="text-sm font-medium text-indigo-800 dark:text-indigo-300">CURRENT STICKER</h4>
+                                    <p class="text-4xl font-bold text-indigo-900 dark:text-indigo-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
                                 </div>
-                                 <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
+                                 <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
                                     <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">STICKER DELTA</h4>
                                     ${deltaHTML}
                                 </div>
-                                <div class="col-span-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
+                                <div class="col-span-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
                                     <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">ORIGINAL STICKER</h4>
                                     <p class="text-xl font-bold">${formatCurrency(card['Original Sticker'], 'THB')}</p>
                                 </div>
@@ -1038,7 +1120,7 @@ Notes for Production:
 
                             ${renderDetailCard('Card Details', cardInfoContent)}
                             ${renderDetailCard('Grading', gradingInfoContent)}
-                            ${card['Comp Notes'] ? renderDetailCard('Comp Notes', parseAndRenderCompNotes(card['Comp Notes'])) : ''}
+                            ${renderDetailCard('Comp Notes', parseAndRenderCompNotes(card['Comp Notes']))}
 
                             <div id="card-actions" class="flex flex-wrap items-center gap-4 pt-4 border-t dark:border-gray-700" data-record-id="${card.id}">
                                 <button data-action="edit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Edit Card</button>
@@ -1056,13 +1138,13 @@ Notes for Production:
             let controlsHTML = '';
 
             if (!card.FrontPhoto?.[0]?.url) {
-                controlsHTML += `<div id="add-photo-FrontPhoto"><button data-action="add-photo-start" data-field="FrontPhoto" class="text-sm text-blue-500 hover:underline">Add Front Photo</button></div>`;
+                controlsHTML += `<div id="add-photo-FrontPhoto"><button data-action="add-photo-start" data-field="FrontPhoto" class="text-sm text-indigo-500 hover:underline">Add Front Photo</button></div>`;
             }
 
             if (card.BackPhoto?.[0]?.url) {
-                controlsHTML += `<button data-action="toggle-photo" class="text-sm text-blue-500 hover:underline">Show Back</button>`;
+                controlsHTML += `<button data-action="toggle-photo" class="text-sm text-indigo-500 hover:underline">Show Back</button>`;
             } else {
-                 controlsHTML += `<div id="add-photo-BackPhoto"><button data-action="add-photo-start" data-field="BackPhoto" class="text-sm text-blue-500 hover:underline">Add Back Photo</button></div>`;
+                 controlsHTML += `<div id="add-photo-BackPhoto"><button data-action="add-photo-start" data-field="BackPhoto" class="text-sm text-indigo-500 hover:underline">Add Back Photo</button></div>`;
             }
             photoControls.innerHTML = controlsHTML;
         }
@@ -1321,7 +1403,7 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
             const suggestedStickerTHB = Math.round((ceilingTHB * 0.95) / 50) * 50;
             
             const linksHTML = research.source_urls && research.source_urls.length > 0 
-                ? research.source_urls.slice(0, 4).map(url => `<li><a href="${url}" target="_blank" class="text-blue-500 hover:underline block truncate">${url}</a></li>`).join('')
+                ? research.source_urls.slice(0, 4).map(url => `<li><a href="${url}" target="_blank" class="text-indigo-500 hover:underline block truncate">${url}</a></li>`).join('')
                 : '<p class="text-sm text-gray-500">No direct research links provided.</p>';
             
             resultsDiv.innerHTML = `
@@ -1404,11 +1486,12 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
                 const finalSticker = parseFloat(document.getElementById('final-sticker-price').value);
                 const finalLocation = document.getElementById('final-location-select').value;
                 const originalSticker = card['Current Sticker'] || null;
+                const compNotesForSave = `Links:\n${(research.source_urls || []).join('\n')}\n\nJustification:\n[${category}, ${confidence}% confidence] ${research.reasoning}\n\nCategory Insight: ${research.category_insight || 'N/A'}`;
 
                 const fieldsToUpdate = {
                     'Current Sticker': finalSticker,
                     'Location': finalLocation,
-                    'Comp Notes': `[${category}, ${confidence}%] FMV: $${fmvUSD.toFixed(2)} USD. ${research.reasoning}`,
+                    'Comp Notes': compNotesForSave,
                 };
                 if (originalSticker) {
                     fieldsToUpdate['Original Sticker'] = originalSticker;
@@ -1750,7 +1833,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 <header class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-6">
                     <div class="flex flex-col md:flex-row items-center justify-between">
                         <div class="flex items-center space-x-4">
-                            <img src="https://i.ibb.co/9mBk8Rq/logo-header-h96.png" alt="Cooks Collectibles Logo" class="h-12 md:h-16 w-auto">
+                            <img src="https://ibb.co/9mBk8Rq0" alt="Cooks Collectibles Logo" class="h-12 md:h-16 w-auto">
                         </div>
                         <div class="flex items-center space-x-4">
                             <nav id="navigation" class="flex space-x-2 mt-4 md:mt-0">
@@ -1872,7 +1955,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     const currentSrc = cardImage.src;
                     const card = state.selectedCard;
                     
-                    if (currentSrc.includes(card.FrontPhoto?.[0]?.url)) {
+                    if (card.FrontPhoto?.[0]?.url && currentSrc.includes(card.FrontPhoto[0].url)) {
                         cardImage.src = card.BackPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Back+Image';
                         togglePhotoButton.textContent = 'Show Front';
                     } else {
