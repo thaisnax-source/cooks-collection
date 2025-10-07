@@ -1,8 +1,12 @@
 <!--
 Notes for Production:
-1.  Logo: The logo is now linked directly for Vercel deployment.
-2.  Tailwind CSS: This file uses the Tailwind CDN. For production, consider processing your CSS.
-3.  API Keys: This version is configured to pull API keys from Vercel environment variables.
+1.  Logo: The logo is currently linked directly from its i.ibb.co URL.
+2.  Tailwind CSS: This file uses the Tailwind CDN for development. For production, you should run
+    the Tailwind CLI to process your CSS and create a smaller, purged file.
+    - npm install -D tailwindcss
+    - npx tailwindcss -c ./tailwind.config.js -i ./your-input.css -o ./your-output.css --watch
+3.  Styling: Most core component styles (modals, cards, buttons) are defined in the <style>
+    tag in the <head>. You can tweak CSS variables there or use Tailwind utility classes directly.
 -->
 <!DOCTYPE html>
 <html lang="en" class="light">
@@ -188,11 +192,11 @@ Notes for Production:
         };
 
         const getCredentials = () => ({
-            apiKey: 'PUBLIC_AIRTABLE_API_KEY',
-            baseId: 'PUBLIC_AIRTABLE_BASE_ID',
-            tableName: 'PUBLIC_AIRTABLE_TABLE_NAME',
-            geminiApiKey: 'PUBLIC_GEMINI_API_KEY',
-            imgbbApiKey: 'PUBLIC_IMGBB_API_KEY',
+            apiKey: document.getElementById('apiKey').value,
+            baseId: document.getElementById('baseId').value,
+            tableName: document.getElementById('tableName').value,
+            geminiApiKey: document.getElementById('geminiApiKey').value,
+            imgbbApiKey: document.getElementById('imgbbApiKey').value,
         });
         
         // --- MAIN APP CONTAINER ---
@@ -201,10 +205,9 @@ Notes for Production:
         // --- API HELPERS ---
         async function airtableFetch(method, path = '', body = null) {
             const { apiKey, baseId, tableName } = getCredentials();
-            if (apiKey.startsWith('PUBLIC_') || !apiKey) {
-                const msg = "Airtable credentials are not configured in Vercel environment variables.";
-                showToast(msg, 'error');
-                throw new Error(msg);
+            if (!apiKey || !baseId || !tableName) {
+                showToast("Airtable credentials are missing.", 'error');
+                throw new Error("Airtable credentials are missing.");
             }
             
             const url = `https://api.airtable.com/v0/${baseId}/${tableName}${path}`;
@@ -475,7 +478,7 @@ Notes for Production:
                     <h3 class="text-xl font-bold mb-4">How would you like to add a card?</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <button id="manual-entry-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
-                            <span class="text-3xl">✍️</span>
+                            <span class="text-3xl"✍️</span>
                             <p class="mt-2 font-semibold">Manual Entry</p>
                         </button>
                         <button id="scan-card-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
@@ -490,8 +493,8 @@ Notes for Production:
         }
 
         function renderScanCardView() {
-            if (getCredentials().geminiApiKey.startsWith('PUBLIC_')) {
-                showToast('A Gemini API Key is required to scan cards. Please set it in your Vercel environment variables.', 'error');
+            if (!getCredentials().geminiApiKey) {
+                showToast('A Gemini API Key is required to scan cards.', 'error');
                 return;
             }
             const contentArea = document.getElementById('content-area');
@@ -585,7 +588,7 @@ Notes for Production:
                 const s = String(r.CardID ?? '');
                 return /^\d+$/.test(s) ? Number(s) : 0;
             })) + 1).toString();
-            
+
             const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
             const locationOptions = allLocations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
 
@@ -682,8 +685,8 @@ Notes for Production:
             document.querySelectorAll('.upload-photo-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const { imgbbApiKey } = getCredentials();
-                    if (imgbbApiKey.startsWith('PUBLIC_')) {
-                        showToast('Please enter an ImgBB API Key in your Vercel environment variables.', 'error');
+                    if (!imgbbApiKey) {
+                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
                         return;
                     }
                     state.photoUploadTarget = btn.dataset.field;
@@ -1266,8 +1269,8 @@ Notes for Production:
          */
         async function getGeminiComps(card, manualInstructions = null) {
             const { geminiApiKey } = getCredentials();
-            if (geminiApiKey.startsWith('PUBLIC_')) {
-                throw new Error("Gemini API key is not configured in Vercel environment variables.");
+            if (!geminiApiKey) {
+                throw new Error("Gemini API key is not set.");
             }
 
             console.log("[COMPS] Calling Gemini for card:", card);
@@ -1741,7 +1744,7 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
 
         async function getGeminiVisionData(frontData, backData) {
             const { geminiApiKey } = getCredentials();
-            if (geminiApiKey.startsWith('PUBLIC_')) {
+            if (!geminiApiKey) {
                 throw new Error("A Gemini API Key is required to scan cards.");
             }
             const model = 'gemini-2.5-flash-preview-05-20';
@@ -1778,6 +1781,52 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 throw new Error("Could not find a valid JSON object in the Gemini Vision response.");
             }
             return JSON.parse(jsonMatch[0]);
+        }
+
+        async function verifyGeminiKey() {
+            const { geminiApiKey } = getCredentials();
+            if (!geminiApiKey) {
+                showToast('Please enter a Gemini API Key first.', 'error');
+                return;
+            }
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error?.message || `HTTP Error: ${response.status}`);
+                }
+
+                const models = data.models.map(model => `
+                    <div class="p-2 border-b dark:border-gray-600">
+                        <p class="font-semibold">${model.displayName}</p>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">Model Name: <code class="bg-gray-200 dark:bg-gray-700 px-1 rounded">${model.name}</code></p>
+                    </div>
+                `).join('');
+
+                showConfirmationModal({
+                    title: 'Gemini Key Verified!',
+                    body: `Your API Key is valid. The following models are available to you: <div class="mt-4 max-h-60 overflow-y-auto border dark:border-gray-600 rounded">${models}</div>`,
+                    onConfirm: hideConfirmationModal
+                });
+                document.getElementById('modal-confirm-btn').textContent = "OK";
+                document.getElementById('modal-cancel-btn').style.display = 'none';
+
+            } catch (error) {
+                showToast(`Gemini Key Verification Failed: ${error.message}`, 'error');
+                showConfirmationModal({
+                    title: 'Verification Failed',
+                    body: `The API key is invalid or the 'Generative Language API' service is not enabled in your Google Cloud project. Please double-check the setup steps. Error: ${error.message}`,
+                    onConfirm: hideConfirmationModal
+                });
+                document.getElementById('modal-confirm-btn').textContent = "OK";
+                document.getElementById('modal-cancel-btn').style.display = 'none';
+            } finally {
+                document.getElementById('modal-confirm-btn').textContent = "Confirm";
+                document.getElementById('modal-cancel-btn').style.display = 'inline-flex';
+            }
         }
         
         async function savePhoto(recordId, field, url) {
@@ -1845,6 +1894,36 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                         </div>
                     </div>
                 </header>
+
+                <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md mb-6" role="alert">
+                    <p class="font-bold">Configuration</p>
+                    <p>Enter your API credentials below. Get a free ImgBB key from <a href="https://api.imgbb.com/" target="_blank" class="font-bold underline">api.imgbb.com</a> for photo uploads.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-2 items-end">
+                        <div>
+                            <label for="apiKey" class="block text-sm font-medium">Airtable API Key</label>
+                            <input type="password" id="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="patoHcB5BiGzANgna.d321310ecb88397b355eb522eec25c5fe713cff791f6e431ce17bb703ff3ee77">
+                        </div>
+                        <div>
+                            <label for="baseId" class="block text-sm font-medium">Airtable Base ID</label>
+                            <input type="text" id="baseId" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="app7DQrgI2EZ3ogzq">
+                        </div>
+                        <div>
+                            <label for="tableName" class="block text-sm font-medium">Airtable Table Name</label>
+                            <input type="text" id="tableName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="Inventory">
+                        </div>
+                         <div>
+                            <label for="geminiApiKey" class="block text-sm font-medium">Gemini API Key</label>
+                            <input type="password" id="geminiApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for AI features">
+                        </div>
+                         <div>
+                            <label for="imgbbApiKey" class="block text-sm font-medium">ImgBB API Key</label>
+                            <input type="password" id="imgbbApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for photo uploads">
+                        </div>
+                    </div>
+                     <div class="mt-4">
+                        <button id="verify-gemini-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Verify Gemini Key & List Models</button>
+                    </div>
+                </div>
                 <main id="content-area"></main>
             `;
         }
@@ -1852,6 +1931,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
 
         function initApp() {
             renderAppShell();
+            
+            document.getElementById('verify-gemini-btn').addEventListener('click', verifyGeminiKey);
             
             document.getElementById('theme-toggle').addEventListener('click', () => {
               const root = document.documentElement;
@@ -1904,8 +1985,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const addPhotoButton = e.target.closest('[data-action="add-photo-start"]');
                 if (addPhotoButton) {
                     const { imgbbApiKey } = getCredentials();
-                    if (imgbbApiKey.startsWith('PUBLIC_')) {
-                        showToast('Please enter an ImgBB API Key in your Vercel environment variables.', 'error');
+                    if (!imgbbApiKey) {
+                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
                         return;
                     }
                     state.photoUploadTarget = addPhotoButton.dataset.field;
@@ -2014,8 +2095,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 if (!file) return;
 
                 const { imgbbApiKey } = getCredentials();
-                if (imgbbApiKey.startsWith('PUBLIC_')) {
-                    showToast('Please enter an ImgBB API Key in your Vercel environment variables.', 'error');
+                if (!imgbbApiKey) {
+                    showToast('ImgBB API Key is missing.', 'error');
                     return;
                 }
 
