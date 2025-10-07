@@ -169,6 +169,12 @@ Notes for Production:
     <script type="module">
         // --- CONFIG & STATE ---
         const THB_CONVERSION_RATE = 32;
+        const LOCATIONS = [
+            "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
+            "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
+            "HG Safe", "Home Gallery Cabinet 1", "Raw 100–300", "Raw 300–1K",
+            "Raw Premium 1K+", "Raw Anime 300+", "Storage Box 6"
+        ];
         const state = {
             records: [],
             currentView: 'dashboard',
@@ -583,13 +589,8 @@ Notes for Production:
                 return /^\d+$/.test(s) ? Number(s) : 0;
             })) + 1).toString();
 
-            const locations = [
-                "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
-                "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
-                "HG Safe", "Home Gallery Cabinet 1", "Raw 100–300", "Raw 300–1K",
-                "Raw Premium 1K+", "Raw Anime 300+", "Storage Box 6"
-            ];
-            const locationOptions = locations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+            const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
+            const locationOptions = allLocations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
 
             const locationField = isUpdate ? `
                 <div class="col-span-1 lg:col-span-2">
@@ -998,6 +999,27 @@ Notes for Production:
         }
 
         // --- CARD DETAIL MODULE ---
+        async function updateCardLocation(recordId, newLocation) {
+            if (!newLocation || !recordId) return;
+
+            try {
+                await airtableFetch('PATCH', `/${recordId}`, { fields: { 'Location': newLocation } });
+
+                const recordIndex = state.records.findIndex(r => r.id === recordId);
+                if (recordIndex !== -1) {
+                    state.records[recordIndex].Location = newLocation;
+                }
+                if (state.selectedCard?.id === recordId) {
+                    state.selectedCard.Location = newLocation;
+                }
+
+                showToast('Location updated!');
+                renderCardDetail(); // Re-render to show static text and hide editor
+            } catch (error) {
+                showToast('Failed to update location.', 'error');
+            }
+        }
+
         async function initCardDetail(recordId) {
             showLoader();
             try {
@@ -1104,6 +1126,23 @@ Notes for Production:
                             <div id="photo-display-container" class="space-y-2">
                                 <img id="card-image-display" src="${card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image'}" alt="Card Photo" class="rounded-lg w-full shadow-lg">
                                 <div id="photo-controls" class="flex justify-center items-center space-x-4"></div>
+                                <div class="mt-4 text-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                                    <div id="location-display-view">
+                                        <span class="text-sm font-medium text-gray-500 dark:text-gray-400">Location:</span>
+                                        <span class="font-bold text-lg">${card.Location || 'N/A'}</span>
+                                        <button data-action="edit-location-start" class="ml-2 text-indigo-500 hover:text-indigo-700 align-middle">
+                                            <svg class="w-4 h-4 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L13.196 5.232z"></path></svg>
+                                        </button>
+                                    </div>
+                                    <div id="location-edit-view" class="hidden space-y-2">
+                                        <select id="card-detail-location-select" class="w-full rounded-md border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500"></select>
+                                        <input id="card-detail-location-manual" type="text" class="hidden w-full rounded-md border-gray-300 dark:border-gray-600" placeholder="New location name">
+                                        <div class="flex justify-center gap-2 mt-2">
+                                            <button data-action="edit-location-cancel" class="text-xs bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 px-3 py-1 rounded">Cancel</button>
+                                            <button data-action="edit-location-save" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded">Save</button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1470,10 +1509,11 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
                     </div>
                 </div>
             `;
-
-            const locations = ["Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Storage Box 1", "INTAKE"];
+            
+            const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
             const locationSelect = document.getElementById('final-location-select');
-            locationSelect.innerHTML = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+            locationSelect.innerHTML = allLocations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('')
+                + '<option value="__addNew__">Add New Location...</option>';
             
             progressDiv.classList.add('hidden');
             resultsDiv.classList.remove('hidden');
@@ -1568,9 +1608,9 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
              progressDiv.classList.add('hidden');
              resultsDiv.classList.remove('hidden');
 
-             const locations = ["Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Storage Box 1", "INTAKE"];
+             const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
              const locationSelect = document.getElementById('final-location-select');
-             locationSelect.innerHTML = locations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
+             locationSelect.innerHTML = allLocations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
 
             document.getElementById('manual-recomp-btn').addEventListener('click', () => {
                 const instructions = document.getElementById('manual-recomp-instructions').value;
@@ -1970,11 +2010,11 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     return;
                 }
 
-                const actionButton = e.target.closest('#card-actions button');
+                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"]');
                 if (actionButton) {
                     const { action } = actionButton.dataset;
-                    const recordId = actionButton.closest('#card-actions').dataset.recordId;
-                    const card = state.records.find(r => r.id === recordId) || state.selectedCard;
+                    const cardId = state.selectedCard?.id;
+                    const card = state.selectedCard;
                     if (!card) return;
 
                     switch (action) {
@@ -1986,13 +2026,38 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                 title: 'Delete Card?',
                                 body: `Permanently delete Card ID ${card.CardID} (${card.Player})? This cannot be undone.`,
                                 onConfirm: async () => {
-                                    await airtableFetch('DELETE', `/${recordId}`);
-                                    state.records = state.records.filter(r => r.id !== recordId);
+                                    await airtableFetch('DELETE', `/${cardId}`);
+                                    state.records = state.records.filter(r => r.id !== cardId);
                                     hideConfirmationModal();
                                     showToast('Card deleted.');
                                     navigate('audit');
                                 }
                             });
+                        case 'edit-location-start': {
+                            document.getElementById('location-display-view').classList.add('hidden');
+                            const editView = document.getElementById('location-edit-view');
+                            editView.classList.remove('hidden');
+                            const select = document.getElementById('card-detail-location-select');
+                            const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
+                            select.innerHTML = allLocations.map(loc => `<option value="${loc}" ${card.Location === loc ? 'selected' : ''}>${loc}</option>`).join('') + '<option value="__addNew__">Add New Location...</option>';
+                            select.onchange = () => {
+                                document.getElementById('card-detail-location-manual').classList.toggle('hidden', select.value !== '__addNew__');
+                            };
+                            return;
+                        }
+                        case 'edit-location-cancel': {
+                            document.getElementById('location-display-view').classList.remove('hidden');
+                            document.getElementById('location-edit-view').classList.add('hidden');
+                            return;
+                        }
+                        case 'edit-location-save': {
+                            const select = document.getElementById('card-detail-location-select');
+                            const newLocation = select.value === '__addNew__'
+                                ? document.getElementById('card-detail-location-manual').value.trim()
+                                : select.value;
+                            updateCardLocation(cardId, newLocation);
+                            return;
+                        }
                     }
                 }
                 
