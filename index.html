@@ -3,6 +3,7 @@ Notes for Production:
 1.  Logo: The logo is now linked directly for Vercel deployment.
 2.  Tailwind CSS: This file uses the Tailwind CDN. For production, consider processing your CSS.
 3.  API Keys: This version uses input fields for API keys, with Airtable credentials pre-filled.
+4.  Performance: This version is optimized with IndexedDB caching and progressive data loading.
 -->
 <!DOCTYPE html>
 <html lang="en" class="light">
@@ -162,6 +163,9 @@ Notes for Production:
         </div>
     </div>
 
+    <!-- Optimization: Add idb-keyval library for IndexedDB caching -->
+    <script src="https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/umd.js"></script>
+
     <script type="module">
         // --- CONFIG & STATE ---
         const THB_CONVERSION_RATE = 32;
@@ -178,6 +182,7 @@ Notes for Production:
             selectedCard: null,
             auditSelectedLocation: null,
             auditCurrentPage: 1,
+            photoAuditType: null,
             searchQuery: '',
             searchField: 'Player',
             searchResults: [],
@@ -198,6 +203,29 @@ Notes for Production:
         
         // --- MAIN APP CONTAINER ---
         const appContainer = document.getElementById('app');
+
+        // ====== PERFORMANCE OPTIMIZATION CORE START ======
+        // Use IndexedDB for a fast, persistent, non-blocking cache.
+
+        // ---- FIX: Use createStore for idb-keyval v6+ ----
+        const customStore = idbKeyval.createStore('cooks-collection-cache', 'airtable');
+        const CACHE_KEYS = {
+            summary: 'records:summary',      // Lightweight fields for instant render
+            full: 'records:full',            // Complete records for detailed views
+            meta: 'records:meta',            // { lastFullSyncISO } for delta updates
+        };
+
+        // ---- Wrappers for IndexedDB cache operations using the custom store ----
+        async function cacheGet(key){ return idbKeyval.get(key, customStore); }
+        async function cacheSet(key, value){ return idbKeyval.set(key, value, customStore); }
+        async function cacheDel(key){ return idbKeyval.del(key, customStore); }
+
+        // ---- Helper to merge new records into an existing array by ID ----
+        function mergeById(existingArr = [], incomingArr = []){
+            const byId = new Map(existingArr.map(r => [r.id, r]));
+            for (const r of incomingArr){ byId.set(r.id, { ...(byId.get(r.id)||{}), ...r }); }
+            return Array.from(byId.values());
+        }
 
         // --- API HELPERS & CACHING ---
         async function airtableFetch(method, path = '', body = null) {
@@ -232,40 +260,70 @@ Notes for Production:
             }
         }
         
-        async function fetchAllAirtableRecords() {
-            let allRecords = [];
+        // ---- OPTIMIZED: Progressive Airtable fetch function ----
+        // Fetches all records, supporting pagination, field selection, and filtering.
+        async function fetchAllAirtableRecords(opts = {}){
+            const { fields = null, filterByFormula = null, onBatch = null, pageSize = 100 } = opts;
+            let all = [];
             let offset = null;
-            const viewParams = 'view=Grid%20view';
+            const params = new URLSearchParams();
+            params.set('view', 'Grid view');
+            params.set('pageSize', String(pageSize));
+            if (fields && Array.isArray(fields)) fields.forEach(f => params.append('fields[]', f));
+            if (filterByFormula) params.set('filterByFormula', filterByFormula);
 
             do {
-                const path = `?${viewParams}${offset ? `&offset=${offset}` : ''}`;
+                const path = `?${params.toString()}${offset ? `&offset=${offset}` : ''}`;
                 const data = await airtableFetch('GET', path);
-                allRecords.push(...data.records);
+                const batch = (data.records || []).map(r => ({ id: r.id, ...r.fields }));
+                all = all.concat(batch);
+                if (typeof onBatch === 'function') {
+                    try { onBatch(batch); } catch {}
+                }
                 offset = data.offset;
             } while (offset);
 
-            return allRecords.map(r => ({ id: r.id, ...r.fields }));
+            return all;
         }
 
-        function getCachedRecords() {
-            const cached = localStorage.getItem('airtable_records');
-            if (!cached) return null;
+        // ---- OPTIMIZED: Fetch only summary fields for a fast initial load ----
+        async function fetchSummaryRecords(){
+            const summaryFields = ['CardID', 'Player', 'Set', 'Current Sticker', 'Grading Company', 'Year', 'Location', 'FrontPhoto', 'BackPhoto'];
+            return fetchAllAirtableRecords({ fields: summaryFields });
+        }
 
-            const { timestamp, records } = JSON.parse(cached);
-            if (Date.now() - timestamp > CACHE_DURATION_MS) {
-                localStorage.removeItem('airtable_records');
+        // ---- OPTIMIZED: Fetch only records updated since the last full sync ----
+        async function backgroundDeltaRefresh(){
+            const meta = (await cacheGet(CACHE_KEYS.meta)) || {};
+            if (!meta.lastFullSyncISO) return null; // No baseline to compare against
+            
+            console.log(`[CACHE] Checking for updates since ${meta.lastFullSyncISO}`);
+            const filter = `LAST_MODIFIED_TIME()>"${meta.lastFullSyncISO}"`;
+            const updated = await fetchAllAirtableRecords({ filterByFormula: filter });
+            
+            if (updated.length === 0) {
+                console.log('[CACHE] No new records found.');
                 return null;
             }
-            return records;
-        }
 
-        function setCachedRecords(records) {
-            const dataToCache = {
-                timestamp: Date.now(),
-                records: records
-            };
-            localStorage.setItem('airtable_records', JSON.stringify(dataToCache));
+            console.log(`[CACHE] Found ${updated.length} updated records. Merging into cache.`);
+            // Merge into FULL and SUMMARY caches
+            const full = (await cacheGet(CACHE_KEYS.full)) || [];
+            const mergedFull = mergeById(full, updated);
+            await cacheSet(CACHE_KEYS.full, mergedFull);
+
+            const updatedSummary = updated.map(r => ({
+                id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, ['Current Sticker']: r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto
+            }));
+            const summary = (await cacheGet(CACHE_KEYS.summary)) || [];
+            const mergedSummary = mergeById(summary, updatedSummary);
+            await cacheSet(CACHE_KEYS.summary, mergedSummary);
+             await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
+
+            return { updatedCount: updated.length, records: mergedFull };
         }
+        
+        // ====== PERFORMANCE OPTIMIZATION CORE END ======
 
 
         // --- UI UTILITIES ---
@@ -378,50 +436,79 @@ Notes for Production:
 
 
         // --- DASHBOARD MODULE ---
+        // OPTIMIZED: This function now uses caching for instant loads.
         async function initDashboard() {
             const contentArea = document.getElementById('content-area');
-            
-            const cachedRecords = getCachedRecords();
-            if (cachedRecords) {
-                state.records = cachedRecords;
+
+            // 1) Try loading summary data from cache for an instant UI render.
+            const cachedSummary = await cacheGet(CACHE_KEYS.summary);
+            if (cachedSummary && Array.isArray(cachedSummary) && cachedSummary.length) {
+                state.records = cachedSummary;
                 renderDashboardFromState();
-                
-                // Fetch in background to update
-                try {
-                    const freshRecords = await fetchAllAirtableRecords();
-                    state.records = freshRecords;
-                    setCachedRecords(freshRecords);
-                    if (state.currentView === 'dashboard') {
+                console.log('[CACHE] Dashboard rendered instantly from summary cache.');
+
+                // 1a) In the background, check for any records updated since the last sync.
+                backgroundDeltaRefresh().then(update => {
+                    if (update && state.currentView === 'dashboard') {
+                        showToast(`${update.updatedCount} record(s) updated in the background.`);
+                        state.records = update.records;
                         renderDashboardFromState();
                     }
-                } catch (error) {
-                    console.error("Background fetch failed:", error);
-                    // Don't show toast for background failures
-                }
+                }).catch(e => console.error("Background delta refresh failed:", e));
 
-            } else {
-                contentArea.innerHTML = `
-                    <div class="space-y-6">
-                        <h2 class="text-xl font-bold">Dashboard</h2>
-                        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                            ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
-                        </div>
-                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                             <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
-                             <div class="space-y-2">
-                                ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
-                             </div>
-                        </div>
-                    </div>
-                `;
-                try {
-                    const records = await fetchAllAirtableRecords();
-                    state.records = records;
-                    setCachedRecords(records);
-                    renderDashboardFromState();
-                } catch (error) {
-                    contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. Check your credentials and console for errors.</p>`;
+                // 1b) Also in background, ensure the full record cache exists. If not, fetch it.
+                const fullCache = await cacheGet(CACHE_KEYS.full);
+                if (!fullCache || fullCache.length === 0) {
+                    console.log('[CACHE] Full cache is empty. Hydrating in background...');
+                    fetchAllAirtableRecords().then(async allRecords => {
+                        await cacheSet(CACHE_KEYS.full, allRecords);
+                        await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
+                        console.log('[CACHE] Full cache hydrated.');
+                        if (state.currentView === 'dashboard') {
+                            state.records = mergeById(state.records, allRecords);
+                            renderDashboardFromState(); // Re-render with full data if anything changed
+                        }
+                    }).catch(e => console.error('Background full sync failed:', e));
                 }
+                return;
+            }
+
+            // 2) If no cache exists, show skeleton loader and perform the initial fetch.
+            contentArea.innerHTML = `
+                <div class="space-y-6">
+                    <h2 class="text-xl font-bold">Dashboard</h2>
+                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                        ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                         <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
+                         <div class="space-y-2">
+                            ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
+                         </div>
+                    </div>
+                </div>`;
+
+            try {
+                // 2a) Fetch the lightweight summary first for a fast initial paint.
+                console.log('[CACHE] No cache found. Fetching summary records...');
+                const summary = await fetchSummaryRecords();
+                state.records = summary;
+                await cacheSet(CACHE_KEYS.summary, summary);
+                renderDashboardFromState();
+                console.log('[CACHE] Dashboard rendered with summary records.');
+
+                // 2b) In the background, fetch the full dataset and populate the full cache.
+                console.log('[CACHE] Fetching full records in background...');
+                fetchAllAirtableRecords().then(async allRecords => {
+                    await cacheSet(CACHE_KEYS.full, allRecords);
+                    await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
+                    state.records = mergeById(summary, allRecords);
+                    if (state.currentView === 'dashboard') renderDashboardFromState();
+                    console.log('[CACHE] Full records cached in background.');
+                }).catch(e => console.error('Background full sync failed:', e));
+                
+            } catch (error) {
+                contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. ${error.message}</p>`;
             }
         }
 
@@ -810,7 +897,13 @@ Notes for Production:
                     fields.Location = 'INTAKE'; 
 
                     const newRecord = await airtableFetch('POST', '', { records: [{ fields }], typecast: true });
-                    state.records.push({ id: newRecord.records[0].id, ...newRecord.records[0].fields });
+                    const newFullRecord = { id: newRecord.records[0].id, ...newRecord.records[0].fields };
+                    state.records.push(newFullRecord);
+                    await cacheSet(CACHE_KEYS.full, state.records);
+                    
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                    await cacheSet(CACHE_KEYS.summary, summary);
+
                     showToast("Card added successfully!");
                     navigate('intake');
                 } else {
@@ -822,6 +915,9 @@ Notes for Production:
                         state.records[recordIndex] = updatedRecord;
                         state.selectedCard = updatedRecord;
                     }
+                    await cacheSet(CACHE_KEYS.full, state.records);
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                    await cacheSet(CACHE_KEYS.summary, summary);
                     navigate('card-detail', { recordId });
                 }
             } catch (error) {
@@ -837,12 +933,14 @@ Notes for Production:
             showLoader();
             try {
                 if (state.records.length === 0) {
-                    const cachedRecords = getCachedRecords();
+                    const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
                     if(cachedRecords) {
                         state.records = cachedRecords;
                     } else {
                         state.records = await fetchAllAirtableRecords();
-                        setCachedRecords(state.records);
+                        await cacheSet(CACHE_KEYS.full, state.records);
+                        const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                        await cacheSet(CACHE_KEYS.summary, summary);
                     }
                 }
                 
@@ -861,24 +959,74 @@ Notes for Production:
         
         function renderAuditSummary() {
             const contentArea = document.getElementById('content-area');
+            
+            // Original Location Audit Logic
             const locationCounts = state.records.reduce((acc, record) => {
                 const loc = record.Location || 'Uncategorized';
                 acc[loc] = (acc[loc] || 0) + 1;
                 return acc;
             }, {});
-
             const sortedLocations = Object.entries(locationCounts).sort((a, b) => a[0].localeCompare(b[0]));
 
+            // New Photo Audit Logic
+            const photoAuditCounts = state.records.reduce((acc, record) => {
+                const loc = record.Location || 'Uncategorized';
+                if (!acc[loc]) {
+                    acc[loc] = { missingFront: 0, missingBack: 0, total: 0 };
+                }
+                acc[loc].total++;
+                if (!record.FrontPhoto || record.FrontPhoto.length === 0) {
+                    acc[loc].missingFront++;
+                }
+                if (!record.BackPhoto || record.BackPhoto.length === 0) {
+                    acc[loc].missingBack++;
+                }
+                return acc;
+            }, {});
+            const sortedPhotoAudit = Object.entries(photoAuditCounts)
+                .filter(([_, counts]) => counts.missingFront > 0 || counts.missingBack > 0)
+                .sort((a, b) => a[0].localeCompare(b[0]));
+
             contentArea.innerHTML = `
-                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
-                    <h3 class="text-xl font-bold">Audit by Location</h3>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        ${sortedLocations.map(([location, count]) => `
-                            <a href="#" class="block p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/50 transition-colors audit-location-link" data-location="${location}">
-                                <p class="font-semibold text-lg text-indigo-600 dark:text-indigo-400">${location}</p>
-                                <p class="text-gray-500 dark:text-gray-400">${count} card(s)</p>
-                            </a>
-                        `).join('')}
+                <div class="space-y-8">
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
+                        <h3 class="text-xl font-bold">Audit by Location</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            ${sortedLocations.map(([location, count]) => `
+                                <a href="#" class="block p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/50 transition-colors audit-location-link" data-location="${location}">
+                                    <p class="font-semibold text-lg text-indigo-600 dark:text-indigo-400">${location}</p>
+                                    <p class="text-gray-500 dark:text-gray-400">${count} card(s)</p>
+                                </a>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
+                        <h3 class="text-xl font-bold">Photo Audit</h3>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full">
+                                <thead class="bg-gray-100 dark:bg-gray-700/50">
+                                    <tr>
+                                        <th class="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider">Location</th>
+                                        <th class="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider">Missing Front Photos</th>
+                                        <th class="px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider">Missing Back Photos</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                    ${sortedPhotoAudit.map(([location, counts]) => `
+                                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                            <td class="px-6 py-4 whitespace-nowrap font-medium">${location}</td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-center">
+                                                ${counts.missingFront > 0 ? `<a href="#" class="text-indigo-500 hover:underline photo-audit-link" data-location="${location}" data-photo-type="FrontPhoto">${counts.missingFront} missing</a>` : '<span>0</span>'}
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-center">
+                                                ${counts.missingBack > 0 ? `<a href="#" class="text-indigo-500 hover:underline photo-audit-link" data-location="${location}" data-photo-type="BackPhoto">${counts.missingBack} missing</a>` : '<span>0</span>'}
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             `;
@@ -935,17 +1083,74 @@ Notes for Production:
                 </div>
             `;
         }
+
+        function renderAuditPhotoDetail(location, photoType) {
+            state.auditSelectedLocation = location; // reuse this state property
+            state.photoAuditType = photoType;
+            const contentArea = document.getElementById('content-area');
+            const page = state.auditCurrentPage;
+            const itemsPerPage = 10;
+
+            const locationRecords = state.records
+                .filter(r => (r.Location || 'Uncategorized') === location)
+                .filter(r => !r[photoType] || r[photoType].length === 0)
+                .sort((a, b) => (Number(a.CardID) || 0) - (Number(b.CardID) || 0));
+
+            const totalPages = Math.ceil(locationRecords.length / itemsPerPage);
+            const startIndex = (page - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedRecords = locationRecords.slice(startIndex, endIndex);
+
+            contentArea.innerHTML = `
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md space-y-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold">Photo Audit: ${location}</h3>
+                            <p class="text-gray-500">Showing cards missing ${photoType === 'FrontPhoto' ? 'Front Photos' : 'Back Photos'}</p>
+                        </div>
+                        <a href="#" class="text-indigo-500 hover:underline" data-view="audit">&larr; Back to Audit Summary</a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                           <thead class="bg-gray-100 dark:bg-gray-700/50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">CardID</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Player</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Set</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                ${paginatedRecords.map(rec => `
+                                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                        <td class="px-4 py-4">${rec.CardID}</td>
+                                        <td class="px-4 py-4"><a href="#" class="text-indigo-500 hover:underline view-card-link" data-record-id="${rec.id}">${rec.Player || ''}</a></td>
+                                        <td class="px-4 py-4">${rec.Set || ''}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex justify-between items-center mt-4">
+                        <button class="pagination-btn photo-audit-pagination bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="prev" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                        <span>Page ${page} of ${totalPages || 1}</span>
+                        <button class="pagination-btn photo-audit-pagination bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded" data-page-nav="next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                    </div>
+                </div>
+            `;
+        }
         
         // --- SEARCH MODULE ---
         async function initSearch(query = '', page = 1) {
             if (state.records.length === 0) {
-                 const cachedRecords = getCachedRecords();
+                 const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
                 if(cachedRecords) {
                     state.records = cachedRecords;
                 } else {
                     showLoader();
                     state.records = await fetchAllAirtableRecords();
-                    setCachedRecords(state.records);
+                    await cacheSet(CACHE_KEYS.full, state.records);
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                    await cacheSet(CACHE_KEYS.summary, summary);
                 }
             }
             renderSearchView();
@@ -1059,7 +1264,10 @@ Notes for Production:
                 if (state.selectedCard?.id === recordId) {
                     state.selectedCard.Location = newLocation;
                 }
-                setCachedRecords(state.records);
+                await cacheSet(CACHE_KEYS.full, state.records);
+                const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                await cacheSet(CACHE_KEYS.summary, summary);
+
 
                 showToast('Location updated!');
                 renderCardDetail(); // Re-render to show static text and hide editor
@@ -1071,12 +1279,14 @@ Notes for Production:
         async function initCardDetail(recordId) {
             showLoader();
              if (state.records.length === 0) {
-                const cachedRecords = getCachedRecords();
+                const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
                 if(cachedRecords) {
                     state.records = cachedRecords;
                 } else {
                     state.records = await fetchAllAirtableRecords();
-                    setCachedRecords(state.records);
+                    await cacheSet(CACHE_KEYS.full, state.records);
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                    await cacheSet(CACHE_KEYS.summary, summary);
                 }
             }
             
@@ -1085,7 +1295,7 @@ Notes for Production:
                 state.selectedCard = card;
                 renderCardDetail();
             } else {
-                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not find card with ID ${recordId}.</p>`;
+                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not find card with ID ${recordId}. It may not be in the cache yet. Try refreshing.</p>`;
             }
         }
 
@@ -1106,7 +1316,14 @@ Notes for Production:
             } else if (state.fromView?.view === 'search') {
                 contextualRecords = state.searchResults; // Already sorted/filtered
                  backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to Search</a>`;
+            } else if (state.fromView?.view === 'audit-photo') {
+                 contextualRecords = state.records
+                    .filter(r => (r.Location || 'Uncategorized') === state.fromView.params.location)
+                    .filter(r => !r[state.fromView.params.photoType] || r[state.fromView.params.photoType].length === 0)
+                    .sort((a, b) => (Number(a.CardID) || 0) - (Number(b.CardID) || 0));
+                 backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to Photo Audit</a>`;
             }
+
 
             let prevCardId = null;
             let nextCardId = null;
@@ -1632,7 +1849,9 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
                     const recordIndex = state.records.findIndex(r => r.id === card.id);
                     if (recordIndex !== -1) { state.records[recordIndex] = { ...state.records[recordIndex], ...fieldsToUpdate }; }
                     if (state.selectedCard?.id === card.id) { state.selectedCard = { ...state.selectedCard, ...fieldsToUpdate }; }
-                    setCachedRecords(state.records);
+                    await cacheSet(CACHE_KEYS.full, state.records);
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                    await cacheSet(CACHE_KEYS.summary, summary);
                     
                     document.getElementById('run-comps-modal').classList.remove('show');
                     showToast('Card updated successfully!');
@@ -1873,7 +2092,9 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const recordIndex = state.records.findIndex(r => r.id === recordId);
                 if (recordIndex !== -1) state.records[recordIndex][field] = [{ url }];
                 if (state.selectedCard?.id === recordId) state.selectedCard[field] = [{ url }];
-                setCachedRecords(state.records);
+                await cacheSet(CACHE_KEYS.full, state.records);
+                const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                await cacheSet(CACHE_KEYS.summary, summary);
 
                 showToast('Photo added successfully!');
                 initCardDetail(recordId); // Re-render the view
@@ -1903,6 +2124,10 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     initIntake(params);
                     break;
                 case 'audit': initAudit(params.location, params.page); break;
+                case 'audit-photo':
+                    state.photoAuditType = params.photoType; // Store it
+                    renderAuditPhotoDetail(params.location, params.photoType);
+                    break;
                 case 'card-detail': initCardDetail(params.recordId); break;
                 case 'edit-card': renderIntakeForm(params.record, false); break;
                 case 'search': initSearch(params.query, params.page); break;
@@ -1980,6 +2205,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                             from.params = {};
                         } else if (state.currentView === 'search') {
                             from.params = { query: state.searchQuery, page: state.searchCurrentPage };
+                        } else if (state.currentView === 'audit-photo') {
+                             from.params = { location: state.auditSelectedLocation, photoType: state.photoAuditType, page: state.auditCurrentPage };
                         }
                         
                         navigate('card-detail', { recordId, from });
@@ -1990,7 +2217,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const backLink = e.target.closest('#back-link');
                 if(backLink) {
                     e.preventDefault();
-                    if (state.fromView && (state.fromView.view === 'audit' || state.fromView.view === 'search')) {
+                    if (state.fromView && (state.fromView.view === 'audit' || state.fromView.view === 'search' || state.fromView.view === 'audit-photo')) {
                          navigate(state.fromView.view, state.fromView.params);
                     } else {
                         navigate('dashboard');
@@ -2043,7 +2270,9 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                 onConfirm: async () => {
                                     await airtableFetch('DELETE', `/${card.id}`);
                                     state.records = state.records.filter(r => r.id !== card.id);
-                                    setCachedRecords(state.records);
+                                    await cacheSet(CACHE_KEYS.full, state.records);
+                                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                                    await cacheSet(CACHE_KEYS.summary, summary);
                                     hideConfirmationModal();
                                     showToast('Card deleted.');
                                     navigate('audit');
@@ -2089,13 +2318,24 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     e.preventDefault();
                     return navigate('audit', { location: locationLink.dataset.location, page: 1 });
                 }
+                
+                const photoAuditLink = e.target.closest('.photo-audit-link');
+                if (photoAuditLink) {
+                    e.preventDefault();
+                    const location = photoAuditLink.dataset.location;
+                    const photoType = photoAuditLink.dataset.photoType;
+                    return navigate('audit-photo', { location, photoType, page: 1 });
+                }
 
                 const pageNavBtn = e.target.closest('.search-pagination-btn, .pagination-btn');
                 if(pageNavBtn){
+                    const isPhotoAudit = pageNavBtn.classList.contains('photo-audit-pagination');
                     const direction = pageNavBtn.dataset.pageNav;
-                    const view = pageNavBtn.classList.contains('search-pagination-btn') ? 'search' : 'audit';
                     
-                    if (view === 'search') {
+                    if (isPhotoAudit) {
+                        const newPage = direction === 'next' ? state.auditCurrentPage + 1 : state.auditCurrentPage - 1;
+                        navigate('audit-photo', { location: state.auditSelectedLocation, photoType: state.photoAuditType, page: newPage });
+                    } else if (pageNavBtn.classList.contains('search-pagination-btn')) {
                          const newPage = direction === 'next' ? state.searchCurrentPage + 1 : state.searchCurrentPage - 1;
                          renderSearchResults(newPage);
                     } else {
@@ -2177,4 +2417,6 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
     </script>
 </body>
 </html>
+
+
 
