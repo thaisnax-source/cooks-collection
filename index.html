@@ -1,12 +1,8 @@
 <!--
 Notes for Production:
-1.  Logo: The logo is currently linked directly from its i.ibb.co URL.
-2.  Tailwind CSS: This file uses the Tailwind CDN for development. For production, you should run
-    the Tailwind CLI to process your CSS and create a smaller, purged file.
-    - npm install -D tailwindcss
-    - npx tailwindcss -c ./tailwind.config.js -i ./your-input.css -o ./your-output.css --watch
-3.  Styling: Most core component styles (modals, cards, buttons) are defined in the <style>
-    tag in the <head>. You can tweak CSS variables there or use Tailwind utility classes directly.
+1.  Logo: The logo is now linked directly for Vercel deployment.
+2.  Tailwind CSS: This file uses the Tailwind CDN. For production, consider processing your CSS.
+3.  API Keys: This version uses input fields for API keys, with Airtable credentials pre-filled.
 -->
 <!DOCTYPE html>
 <html lang="en" class="light">
@@ -169,6 +165,7 @@ Notes for Production:
     <script type="module">
         // --- CONFIG & STATE ---
         const THB_CONVERSION_RATE = 32;
+        const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour
         const LOCATIONS = [
             "Showcase", "Graded 1–9 Bin", "Graded 9.5–10 Premium Bin", "Graded Anime/TCG",
             "Storage Box 5", "Storage Box 4", "Storage Box 3", "Storage Box 2", "Storage Box 1",
@@ -202,12 +199,13 @@ Notes for Production:
         // --- MAIN APP CONTAINER ---
         const appContainer = document.getElementById('app');
 
-        // --- API HELPERS ---
+        // --- API HELPERS & CACHING ---
         async function airtableFetch(method, path = '', body = null) {
             const { apiKey, baseId, tableName } = getCredentials();
             if (!apiKey || !baseId || !tableName) {
-                showToast("Airtable credentials are missing.", 'error');
-                throw new Error("Airtable credentials are missing.");
+                const msg = "Airtable credentials are missing from the configuration.";
+                showToast(msg, 'error');
+                throw new Error(msg);
             }
             
             const url = `https://api.airtable.com/v0/${baseId}/${tableName}${path}`;
@@ -248,6 +246,27 @@ Notes for Production:
 
             return allRecords.map(r => ({ id: r.id, ...r.fields }));
         }
+
+        function getCachedRecords() {
+            const cached = localStorage.getItem('airtable_records');
+            if (!cached) return null;
+
+            const { timestamp, records } = JSON.parse(cached);
+            if (Date.now() - timestamp > CACHE_DURATION_MS) {
+                localStorage.removeItem('airtable_records');
+                return null;
+            }
+            return records;
+        }
+
+        function setCachedRecords(records) {
+            const dataToCache = {
+                timestamp: Date.now(),
+                records: records
+            };
+            localStorage.setItem('airtable_records', JSON.stringify(dataToCache));
+        }
+
 
         // --- UI UTILITIES ---
         function showLoader() {
@@ -361,46 +380,68 @@ Notes for Production:
         // --- DASHBOARD MODULE ---
         async function initDashboard() {
             const contentArea = document.getElementById('content-area');
-            contentArea.innerHTML = `
-                <div class="space-y-6">
-                    <h2 class="text-xl font-bold">Dashboard</h2>
-                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
-                    </div>
-                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                         <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
-                         <div class="space-y-2">
-                            ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
-                         </div>
-                    </div>
-                </div>
-            `;
-
-            try {
-                if (state.records.length === 0) {
-                    state.records = await fetchAllAirtableRecords();
-                }
-                const records = state.records;
+            
+            const cachedRecords = getCachedRecords();
+            if (cachedRecords) {
+                state.records = cachedRecords;
+                renderDashboardFromState();
                 
-                let totalCards = records.length;
-                let totalGraded = records.filter(r => r['Grading Company'] && r['Grading Company'] !== 'Raw').length;
-                let totalRaw = totalCards - totalGraded;
-                let totalStickerValue = records.reduce((sum, r) => sum + (r['Current Sticker'] || 0), 0);
+                // Fetch in background to update
+                try {
+                    const freshRecords = await fetchAllAirtableRecords();
+                    state.records = freshRecords;
+                    setCachedRecords(freshRecords);
+                    if (state.currentView === 'dashboard') {
+                        renderDashboardFromState();
+                    }
+                } catch (error) {
+                    console.error("Background fetch failed:", error);
+                    // Don't show toast for background failures
+                }
 
-                const latestRecords = records
-                    .sort((a, b) => (Number(b.CardID) || 0) - (Number(a.CardID) || 0))
-                    .slice(0, 10);
-
-                renderDashboard({
-                    totalCards,
-                    totalGraded,
-                    totalRaw,
-                    totalStickerValue
-                }, latestRecords);
-
-            } catch (error) {
-                contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. Check your credentials and console for errors.</p>`;
+            } else {
+                contentArea.innerHTML = `
+                    <div class="space-y-6">
+                        <h2 class="text-xl font-bold">Dashboard</h2>
+                        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                            ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
+                        </div>
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                             <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
+                             <div class="space-y-2">
+                                ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
+                             </div>
+                        </div>
+                    </div>
+                `;
+                try {
+                    const records = await fetchAllAirtableRecords();
+                    state.records = records;
+                    setCachedRecords(records);
+                    renderDashboardFromState();
+                } catch (error) {
+                    contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. Check your credentials and console for errors.</p>`;
+                }
             }
+        }
+
+        function renderDashboardFromState() {
+            const records = state.records;
+            let totalCards = records.length;
+            let totalGraded = records.filter(r => r['Grading Company'] && r['Grading Company'] !== 'Raw').length;
+            let totalRaw = totalCards - totalGraded;
+            let totalStickerValue = records.reduce((sum, r) => sum + (r['Current Sticker'] || 0), 0);
+
+            const latestRecords = records
+                .sort((a, b) => (Number(b.CardID) || 0) - (Number(a.CardID) || 0))
+                .slice(0, 10);
+
+            renderDashboard({
+                totalCards,
+                totalGraded,
+                totalRaw,
+                totalStickerValue
+            }, latestRecords);
         }
         
         function renderDashboard(summary, latest) {
@@ -478,7 +519,7 @@ Notes for Production:
                     <h3 class="text-xl font-bold mb-4">How would you like to add a card?</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <button id="manual-entry-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
-                            <span class="text-3xl"✍️</span>
+                            <span class="text-3xl">✍️</span>
                             <p class="mt-2 font-semibold">Manual Entry</p>
                         </button>
                         <button id="scan-card-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-6 px-4 rounded-lg text-center transition-transform transform hover:scale-105">
@@ -588,7 +629,7 @@ Notes for Production:
                 const s = String(r.CardID ?? '');
                 return /^\d+$/.test(s) ? Number(s) : 0;
             })) + 1).toString();
-
+            
             const allLocations = [...new Set([...LOCATIONS, ...state.records.map(r => r.Location).filter(Boolean)])].sort();
             const locationOptions = allLocations.map(loc => `<option value="${loc}" ${record?.Location === loc ? 'selected' : ''}>${loc}</option>`).join('');
 
@@ -686,7 +727,7 @@ Notes for Production:
                 btn.addEventListener('click', () => {
                     const { imgbbApiKey } = getCredentials();
                     if (!imgbbApiKey) {
-                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
+                        showToast('Please enter an ImgBB API Key.', 'error');
                         return;
                     }
                     state.photoUploadTarget = btn.dataset.field;
@@ -796,7 +837,13 @@ Notes for Production:
             showLoader();
             try {
                 if (state.records.length === 0) {
-                    state.records = await fetchAllAirtableRecords();
+                    const cachedRecords = getCachedRecords();
+                    if(cachedRecords) {
+                        state.records = cachedRecords;
+                    } else {
+                        state.records = await fetchAllAirtableRecords();
+                        setCachedRecords(state.records);
+                    }
                 }
                 
                 state.auditSelectedLocation = location;
@@ -890,7 +937,17 @@ Notes for Production:
         }
         
         // --- SEARCH MODULE ---
-        function initSearch(query = '', page = 1) {
+        async function initSearch(query = '', page = 1) {
+            if (state.records.length === 0) {
+                 const cachedRecords = getCachedRecords();
+                if(cachedRecords) {
+                    state.records = cachedRecords;
+                } else {
+                    showLoader();
+                    state.records = await fetchAllAirtableRecords();
+                    setCachedRecords(state.records);
+                }
+            }
             renderSearchView();
             const input = document.getElementById('search-query');
             const btn = document.getElementById('search-btn');
@@ -898,22 +955,25 @@ Notes for Production:
             input.value = query;
             state.searchQuery = query;
             
-            async function run() {
+            function run() {
                 state.searchQuery = input.value;
-                const out = document.getElementById('search-results');
-                out.innerHTML = `<div class="flex justify-center items-center h-32"><div class="loader"></div></div>`;
-                try {
-                    const records = await searchAirtableByQuery(state.searchQuery);
-                    state.searchResults = records;
+                const q = (state.searchQuery || '').trim().toLowerCase();
+                if (!q) {
+                    state.searchResults = [];
                     renderSearchResults(1);
-                } catch (e) {
-                    console.error('Search failed:', e);
-                    out.innerHTML = `<div class="text-red-600">Search error: ${e.message}</div>`;
-                }
+                    return;
+                };
+
+                const FIELDS = ['CardID','Year','Set','Subset','Parallel','Player','Card#','Limited#','Grading Company','Grade','Cert/Serial','Location','User Notes','Comp Notes'];
+                state.searchResults = state.records.filter(r => {
+                    return FIELDS.some(field => String(r[field] || '').toLowerCase().includes(q));
+                });
+
+                renderSearchResults(1);
             }
 
             btn.addEventListener('click', run);
-            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
             
             if(query) {
                 run();
@@ -936,19 +996,6 @@ Notes for Production:
                     <div id="search-results"></div>
                 </div>
             `;
-        }
-
-        async function searchAirtableByQuery(query) {
-            const q = (query || '').trim();
-            if (!q) return [];
-
-            const FIELDS = ['CardID','Year','Set','Subset','Parallel','Player','Card#','Limited#','Grading Company','Grade','Cert/Serial','Location','User Notes','Comp Notes'];
-            const esc = q.replace(/"/g, '\\"');
-            const formula = `OR(${FIELDS.map(f => `SEARCH(LOWER("${esc}"), LOWER({${f}}&""))`).join(',')})`;
-
-            const path = `?filterByFormula=${encodeURIComponent(formula)}`;
-            const data = await airtableFetch('GET', path);
-            return (data.records || []).map(r => ({ id: r.id, ...r.fields }));
         }
 
         function renderSearchResults(page = 1) {
@@ -1012,6 +1059,7 @@ Notes for Production:
                 if (state.selectedCard?.id === recordId) {
                     state.selectedCard.Location = newLocation;
                 }
+                setCachedRecords(state.records);
 
                 showToast('Location updated!');
                 renderCardDetail(); // Re-render to show static text and hide editor
@@ -1022,16 +1070,22 @@ Notes for Production:
 
         async function initCardDetail(recordId) {
             showLoader();
-            try {
-                let card = state.records.find(r => r.id === recordId);
-                if (!card) {
-                    const data = await airtableFetch('GET', `/${recordId}`);
-                    card = { id: data.id, ...data.fields };
+             if (state.records.length === 0) {
+                const cachedRecords = getCachedRecords();
+                if(cachedRecords) {
+                    state.records = cachedRecords;
+                } else {
+                    state.records = await fetchAllAirtableRecords();
+                    setCachedRecords(state.records);
                 }
+            }
+            
+            const card = state.records.find(r => r.id === recordId);
+            if(card) {
                 state.selectedCard = card;
                 renderCardDetail();
-            } catch (error) {
-                document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not load card details: ${error.message}</p>`;
+            } else {
+                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not find card with ID ${recordId}.</p>`;
             }
         }
 
@@ -1040,17 +1094,42 @@ Notes for Production:
             const card = state.selectedCard;
             if (!card) return;
             
-            let backLinkText = `&larr; Back to Dashboard`;
-            if (state.fromView) {
-                const from = state.fromView;
-                if (from.view === 'audit' && from.params.location) {
-                    backLinkText = `&larr; Back to ${from.params.location} (Page ${from.params.page})`;
-                } else if (from.view === 'audit') {
-                    backLinkText = '&larr; Back to Audit';
-                } else if (from.view === 'search') {
-                    backLinkText = `&larr; Back to Search Results`;
-                }
+            let backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back</a>`;
+            
+            let contextualRecords = [];
+            if (state.fromView?.view === 'audit' && state.fromView?.params?.location) {
+                contextualRecords = state.records
+                    .filter(r => r.Location === state.fromView.params.location)
+                    .sort((a, b) => (Number(a.CardID) || 0) - (Number(b.CardID) || 0));
+                backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to ${state.fromView.params.location}</a>`;
+
+            } else if (state.fromView?.view === 'search') {
+                contextualRecords = state.searchResults; // Already sorted/filtered
+                 backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to Search</a>`;
             }
+
+            let prevCardId = null;
+            let nextCardId = null;
+            let navigationHTML = '';
+
+            if (contextualRecords.length > 0) {
+                const currentIndex = contextualRecords.findIndex(r => r.id === card.id);
+                if (currentIndex > -1) {
+                    if (currentIndex > 0) {
+                        prevCardId = contextualRecords[currentIndex - 1].id;
+                    }
+                    if (currentIndex < contextualRecords.length - 1) {
+                        nextCardId = contextualRecords[currentIndex + 1].id;
+                    }
+                }
+                 navigationHTML = `
+                    <div class="flex justify-between mt-4">
+                        <button data-action="navigate-prev" data-record-id="${prevCardId}" class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded text-sm" ${!prevCardId ? 'disabled' : ''}>&larr; Previous Card</button>
+                        <button data-action="navigate-next" data-record-id="${nextCardId}" class="pagination-btn bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded text-sm" ${!nextCardId ? 'disabled' : ''}>Next Card &rarr;</button>
+                    </div>
+                `;
+            }
+
 
             const currentSticker = card['Current Sticker'] || 0;
             const originalSticker = card['Original Sticker'] || 0;
@@ -1118,10 +1197,12 @@ Notes for Production:
                             <h2 class="text-3xl font-bold tracking-tight">${card.Player || 'Unknown Player'}</h2>
                             <p class="text-lg text-gray-500 dark:text-gray-400">${card.Year || ''} ${card.Set || ''}</p>
                         </div>
-                         <a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">${backLinkText}</a>
+                         ${backLinkHTML}
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    ${navigationHTML}
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
                         <div class="md:col-span-1 space-y-4">
                             <div id="photo-display-container" class="space-y-2">
                                 <img id="card-image-display" src="${card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image'}" alt="Card Photo" class="rounded-lg w-full shadow-lg">
@@ -1270,7 +1351,7 @@ Notes for Production:
         async function getGeminiComps(card, manualInstructions = null) {
             const { geminiApiKey } = getCredentials();
             if (!geminiApiKey) {
-                throw new Error("Gemini API key is not set.");
+                throw new Error("Gemini API key is not configured.");
             }
 
             console.log("[COMPS] Calling Gemini for card:", card);
@@ -1551,6 +1632,7 @@ ${manualInstructions ? `\n**Manual Guidance (PRIORITIZE THIS):**\n${manualInstru
                     const recordIndex = state.records.findIndex(r => r.id === card.id);
                     if (recordIndex !== -1) { state.records[recordIndex] = { ...state.records[recordIndex], ...fieldsToUpdate }; }
                     if (state.selectedCard?.id === card.id) { state.selectedCard = { ...state.selectedCard, ...fieldsToUpdate }; }
+                    setCachedRecords(state.records);
                     
                     document.getElementById('run-comps-modal').classList.remove('show');
                     showToast('Card updated successfully!');
@@ -1782,52 +1864,6 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             }
             return JSON.parse(jsonMatch[0]);
         }
-
-        async function verifyGeminiKey() {
-            const { geminiApiKey } = getCredentials();
-            if (!geminiApiKey) {
-                showToast('Please enter a Gemini API Key first.', 'error');
-                return;
-            }
-
-            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
-            try {
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error?.message || `HTTP Error: ${response.status}`);
-                }
-
-                const models = data.models.map(model => `
-                    <div class="p-2 border-b dark:border-gray-600">
-                        <p class="font-semibold">${model.displayName}</p>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Model Name: <code class="bg-gray-200 dark:bg-gray-700 px-1 rounded">${model.name}</code></p>
-                    </div>
-                `).join('');
-
-                showConfirmationModal({
-                    title: 'Gemini Key Verified!',
-                    body: `Your API Key is valid. The following models are available to you: <div class="mt-4 max-h-60 overflow-y-auto border dark:border-gray-600 rounded">${models}</div>`,
-                    onConfirm: hideConfirmationModal
-                });
-                document.getElementById('modal-confirm-btn').textContent = "OK";
-                document.getElementById('modal-cancel-btn').style.display = 'none';
-
-            } catch (error) {
-                showToast(`Gemini Key Verification Failed: ${error.message}`, 'error');
-                showConfirmationModal({
-                    title: 'Verification Failed',
-                    body: `The API key is invalid or the 'Generative Language API' service is not enabled in your Google Cloud project. Please double-check the setup steps. Error: ${error.message}`,
-                    onConfirm: hideConfirmationModal
-                });
-                document.getElementById('modal-confirm-btn').textContent = "OK";
-                document.getElementById('modal-cancel-btn').style.display = 'none';
-            } finally {
-                document.getElementById('modal-confirm-btn').textContent = "Confirm";
-                document.getElementById('modal-cancel-btn').style.display = 'inline-flex';
-            }
-        }
         
         async function savePhoto(recordId, field, url) {
              try {
@@ -1837,6 +1873,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const recordIndex = state.records.findIndex(r => r.id === recordId);
                 if (recordIndex !== -1) state.records[recordIndex][field] = [{ url }];
                 if (state.selectedCard?.id === recordId) state.selectedCard[field] = [{ url }];
+                setCachedRecords(state.records);
 
                 showToast('Photo added successfully!');
                 initCardDetail(recordId); // Re-render the view
@@ -1894,34 +1931,15 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                         </div>
                     </div>
                 </header>
-
-                <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md mb-6" role="alert">
+                <div id="config-container" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md mb-6" role="alert">
                     <p class="font-bold">Configuration</p>
-                    <p>Enter your API credentials below. Get a free ImgBB key from <a href="https://api.imgbb.com/" target="_blank" class="font-bold underline">api.imgbb.com</a> for photo uploads.</p>
+                    <p>Enter your API credentials below. These are stored only in your browser.</p>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-2 items-end">
-                        <div>
-                            <label for="apiKey" class="block text-sm font-medium">Airtable API Key</label>
-                            <input type="password" id="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="patoHcB5BiGzANgna.d321310ecb88397b355eb522eec25c5fe713cff791f6e431ce17bb703ff3ee77">
-                        </div>
-                        <div>
-                            <label for="baseId" class="block text-sm font-medium">Airtable Base ID</label>
-                            <input type="text" id="baseId" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="app7DQrgI2EZ3ogzq">
-                        </div>
-                        <div>
-                            <label for="tableName" class="block text-sm font-medium">Airtable Table Name</label>
-                            <input type="text" id="tableName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="Inventory">
-                        </div>
-                         <div>
-                            <label for="geminiApiKey" class="block text-sm font-medium">Gemini API Key</label>
-                            <input type="password" id="geminiApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for AI features">
-                        </div>
-                         <div>
-                            <label for="imgbbApiKey" class="block text-sm font-medium">ImgBB API Key</label>
-                            <input type="password" id="imgbbApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Required for photo uploads">
-                        </div>
-                    </div>
-                     <div class="mt-4">
-                        <button id="verify-gemini-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">Verify Gemini Key & List Models</button>
+                        <div><label for="apiKey" class="block text-sm font-medium">Airtable API Key</label><input type="password" id="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="patoHcB5BiGzANgna.d321310ecb88397b355eb522eec25c5fe713cff791f6e431ce17bb703ff3ee77"></div>
+                        <div><label for="baseId" class="block text-sm font-medium">Airtable Base ID</label><input type="text" id="baseId" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="app7DQrgI2EZ3ogzq"></div>
+                        <div><label for="tableName" class="block text-sm font-medium">Airtable Table Name</label><input type="text" id="tableName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="Inventory"></div>
+                        <div><label for="geminiApiKey" class="block text-sm font-medium">Gemini API Key</label><input type="password" id="geminiApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2"></div>
+                        <div><label for="imgbbApiKey" class="block text-sm font-medium">ImgBB API Key</label><input type="password" id="imgbbApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2"></div>
                     </div>
                 </div>
                 <main id="content-area"></main>
@@ -1931,8 +1949,6 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
 
         function initApp() {
             renderAppShell();
-            
-            document.getElementById('verify-gemini-btn').addEventListener('click', verifyGeminiKey);
             
             document.getElementById('theme-toggle').addEventListener('click', () => {
               const root = document.documentElement;
@@ -1974,8 +1990,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const backLink = e.target.closest('#back-link');
                 if(backLink) {
                     e.preventDefault();
-                    if (state.fromView) {
-                        navigate(state.fromView.view, state.fromView.params);
+                    if (state.fromView && (state.fromView.view === 'audit' || state.fromView.view === 'search')) {
+                         navigate(state.fromView.view, state.fromView.params);
                     } else {
                         navigate('dashboard');
                     }
@@ -1986,7 +2002,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 if (addPhotoButton) {
                     const { imgbbApiKey } = getCredentials();
                     if (!imgbbApiKey) {
-                        showToast('Please enter an ImgBB API Key in the configuration.', 'error');
+                        showToast('Please enter an ImgBB API Key.', 'error');
                         return;
                     }
                     state.photoUploadTarget = addPhotoButton.dataset.field;
@@ -2010,12 +2026,11 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     return;
                 }
 
-                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"]');
+                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"], [data-action^="navigate"]');
                 if (actionButton) {
-                    const { action } = actionButton.dataset;
-                    const cardId = state.selectedCard?.id;
+                    const { action, recordId } = actionButton.dataset;
                     const card = state.selectedCard;
-                    if (!card) return;
+                    if (!card && !recordId) return;
 
                     switch (action) {
                         case 'edit': return navigate('edit-card', { record: card });
@@ -2026,8 +2041,9 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                 title: 'Delete Card?',
                                 body: `Permanently delete Card ID ${card.CardID} (${card.Player})? This cannot be undone.`,
                                 onConfirm: async () => {
-                                    await airtableFetch('DELETE', `/${cardId}`);
-                                    state.records = state.records.filter(r => r.id !== cardId);
+                                    await airtableFetch('DELETE', `/${card.id}`);
+                                    state.records = state.records.filter(r => r.id !== card.id);
+                                    setCachedRecords(state.records);
                                     hideConfirmationModal();
                                     showToast('Card deleted.');
                                     navigate('audit');
@@ -2055,7 +2071,14 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                             const newLocation = select.value === '__addNew__'
                                 ? document.getElementById('card-detail-location-manual').value.trim()
                                 : select.value;
-                            updateCardLocation(cardId, newLocation);
+                            updateCardLocation(card.id, newLocation);
+                            return;
+                        }
+                        case 'navigate-prev':
+                        case 'navigate-next': {
+                            if (recordId) {
+                                navigate('card-detail', { recordId, from: state.fromView });
+                            }
                             return;
                         }
                     }
@@ -2096,7 +2119,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
 
                 const { imgbbApiKey } = getCredentials();
                 if (!imgbbApiKey) {
-                    showToast('ImgBB API Key is missing.', 'error');
+                    showToast('Please enter an ImgBB API Key.', 'error');
                     return;
                 }
 
