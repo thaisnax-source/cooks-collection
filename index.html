@@ -205,29 +205,23 @@ Notes for Production:
         const appContainer = document.getElementById('app');
 
         // ====== PERFORMANCE OPTIMIZATION CORE START ======
-        // Use IndexedDB for a fast, persistent, non-blocking cache.
-
-        // ---- FIX: Use createStore for idb-keyval v6+ ----
         const customStore = idbKeyval.createStore('cooks-collection-cache', 'airtable');
         const CACHE_KEYS = {
-            summary: 'records:summary',      // Lightweight fields for instant render
-            full: 'records:full',            // Complete records for detailed views
-            meta: 'records:meta',            // { lastFullSyncISO } for delta updates
+            summary: 'records:summary',
+            full: 'records:full',
+            meta: 'records:meta',
         };
 
-        // ---- Wrappers for IndexedDB cache operations using the custom store ----
         async function cacheGet(key){ return idbKeyval.get(key, customStore); }
         async function cacheSet(key, value){ return idbKeyval.set(key, value, customStore); }
         async function cacheDel(key){ return idbKeyval.del(key, customStore); }
 
-        // ---- Helper to merge new records into an existing array by ID ----
         function mergeById(existingArr = [], incomingArr = []){
             const byId = new Map(existingArr.map(r => [r.id, r]));
             for (const r of incomingArr){ byId.set(r.id, { ...(byId.get(r.id)||{}), ...r }); }
             return Array.from(byId.values());
         }
 
-        // --- API HELPERS & CACHING ---
         async function airtableFetch(method, path = '', body = null) {
             const { apiKey, baseId, tableName } = getCredentials();
             if (!apiKey || !baseId || !tableName) {
@@ -247,7 +241,7 @@ Notes for Production:
                     let errorText = `HTTP error! status: ${response.status}`;
                     try {
                         const errorData = await response.json();
-                        console.error('Airtable Error details:', errorData); // Log full details
+                        console.error('Airtable Error details:', errorData);
                         errorText = errorData.error?.message || errorText;
                     } catch {}
                     throw new Error(errorText);
@@ -260,8 +254,6 @@ Notes for Production:
             }
         }
         
-        // ---- OPTIMIZED: Progressive Airtable fetch function ----
-        // Fetches all records, supporting pagination, field selection, and filtering.
         async function fetchAllAirtableRecords(opts = {}){
             const { fields = null, filterByFormula = null, onBatch = null, pageSize = 100 } = opts;
             let all = [];
@@ -277,25 +269,21 @@ Notes for Production:
                 const data = await airtableFetch('GET', path);
                 const batch = (data.records || []).map(r => ({ id: r.id, ...r.fields }));
                 all = all.concat(batch);
-                if (typeof onBatch === 'function') {
-                    try { onBatch(batch); } catch {}
-                }
+                if (typeof onBatch === 'function') { try { onBatch(batch); } catch {} }
                 offset = data.offset;
             } while (offset);
 
             return all;
         }
 
-        // ---- OPTIMIZED: Fetch only summary fields for a fast initial load ----
         async function fetchSummaryRecords(){
             const summaryFields = ['CardID', 'Player', 'Set', 'Current Sticker', 'Grading Company', 'Year', 'Location', 'FrontPhoto', 'BackPhoto'];
             return fetchAllAirtableRecords({ fields: summaryFields });
         }
 
-        // ---- OPTIMIZED: Fetch only records updated since the last full sync ----
         async function backgroundDeltaRefresh(){
             const meta = (await cacheGet(CACHE_KEYS.meta)) || {};
-            if (!meta.lastFullSyncISO) return null; // No baseline to compare against
+            if (!meta.lastFullSyncISO) return null;
             
             console.log(`[CACHE] Checking for updates since ${meta.lastFullSyncISO}`);
             const filter = `LAST_MODIFIED_TIME()>"${meta.lastFullSyncISO}"`;
@@ -307,24 +295,43 @@ Notes for Production:
             }
 
             console.log(`[CACHE] Found ${updated.length} updated records. Merging into cache.`);
-            // Merge into FULL and SUMMARY caches
             const full = (await cacheGet(CACHE_KEYS.full)) || [];
             const mergedFull = mergeById(full, updated);
             await cacheSet(CACHE_KEYS.full, mergedFull);
 
-            const updatedSummary = updated.map(r => ({
-                id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, ['Current Sticker']: r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto
-            }));
+            const summaryFields = ['id', 'CardID', 'Player', 'Set', 'Current Sticker', 'Grading Company', 'Year', 'Location', 'FrontPhoto', 'BackPhoto'];
+            const updatedSummary = updated.map(r => summaryFields.reduce((obj, key) => ({...obj, [key]: r[key]}), {}));
             const summary = (await cacheGet(CACHE_KEYS.summary)) || [];
             const mergedSummary = mergeById(summary, updatedSummary);
             await cacheSet(CACHE_KEYS.summary, mergedSummary);
-             await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
+            await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
 
             return { updatedCount: updated.length, records: mergedFull };
         }
         
-        // ====== PERFORMANCE OPTIMIZATION CORE END ======
+        // ---- OPTIMIZED: Central data loading function for all modules ----
+        async function ensureDataLoaded() {
+            if (state.records.length > 0) return; // Already loaded in this session
 
+            const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
+            if (cachedRecords) {
+                state.records = cachedRecords;
+                console.log('[CACHE] Primed app state from cache.');
+                return;
+            }
+            
+            // If no cache, fetch fresh
+            showLoader();
+            console.log('[CACHE] No cache, fetching all records for initial load...');
+            state.records = await fetchAllAirtableRecords();
+            await cacheSet(CACHE_KEYS.full, state.records);
+            const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto}));
+            await cacheSet(CACHE_KEYS.summary, summary);
+            await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
+            console.log('[CACHE] Initial data fetched and cached.');
+        }
+
+        // ====== PERFORMANCE OPTIMIZATION CORE END ======
 
         // --- UI UTILITIES ---
         function showLoader() {
@@ -436,18 +443,14 @@ Notes for Production:
 
 
         // --- DASHBOARD MODULE ---
-        // OPTIMIZED: This function now uses caching for instant loads.
         async function initDashboard() {
             const contentArea = document.getElementById('content-area');
 
-            // 1) Try loading summary data from cache for an instant UI render.
             const cachedSummary = await cacheGet(CACHE_KEYS.summary);
             if (cachedSummary && Array.isArray(cachedSummary) && cachedSummary.length) {
                 state.records = cachedSummary;
                 renderDashboardFromState();
                 console.log('[CACHE] Dashboard rendered instantly from summary cache.');
-
-                // 1a) In the background, check for any records updated since the last sync.
                 backgroundDeltaRefresh().then(update => {
                     if (update && state.currentView === 'dashboard') {
                         showToast(`${update.updatedCount} record(s) updated in the background.`);
@@ -455,60 +458,26 @@ Notes for Production:
                         renderDashboardFromState();
                     }
                 }).catch(e => console.error("Background delta refresh failed:", e));
+            } else {
+                contentArea.innerHTML = `<div class="flex justify-center items-center h-64"><div class="loader"></div><p class="ml-4">Performing first-time data sync...</p></div>`;
+                try {
+                    console.log('[CACHE] No cache found. Fetching summary records for first paint...');
+                    const summary = await fetchSummaryRecords();
+                    state.records = summary;
+                    await cacheSet(CACHE_KEYS.summary, summary);
+                    renderDashboardFromState();
+                    console.log('[CACHE] Dashboard rendered with summary records.');
 
-                // 1b) Also in background, ensure the full record cache exists. If not, fetch it.
-                const fullCache = await cacheGet(CACHE_KEYS.full);
-                if (!fullCache || fullCache.length === 0) {
-                    console.log('[CACHE] Full cache is empty. Hydrating in background...');
                     fetchAllAirtableRecords().then(async allRecords => {
                         await cacheSet(CACHE_KEYS.full, allRecords);
                         await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
-                        console.log('[CACHE] Full cache hydrated.');
-                        if (state.currentView === 'dashboard') {
-                            state.records = mergeById(state.records, allRecords);
-                            renderDashboardFromState(); // Re-render with full data if anything changed
-                        }
+                        state.records = mergeById(summary, allRecords);
+                        if (state.currentView === 'dashboard') renderDashboardFromState();
+                        console.log('[CACHE] Full records cached in background.');
                     }).catch(e => console.error('Background full sync failed:', e));
+                } catch (error) {
+                    contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. ${error.message}</p>`;
                 }
-                return;
-            }
-
-            // 2) If no cache exists, show skeleton loader and perform the initial fetch.
-            contentArea.innerHTML = `
-                <div class="space-y-6">
-                    <h2 class="text-xl font-bold">Dashboard</h2>
-                    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        ${[...Array(4)].map(() => `<div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md skeleton h-24"></div>`).join('')}
-                    </div>
-                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                         <div class="h-8 w-1/3 bg-gray-200 dark:bg-gray-700 rounded skeleton mb-4"></div>
-                         <div class="space-y-2">
-                            ${[...Array(5)].map(() => `<div class="h-12 w-full bg-gray-200 dark:bg-gray-700 rounded skeleton"></div>`).join('')}
-                         </div>
-                    </div>
-                </div>`;
-
-            try {
-                // 2a) Fetch the lightweight summary first for a fast initial paint.
-                console.log('[CACHE] No cache found. Fetching summary records...');
-                const summary = await fetchSummaryRecords();
-                state.records = summary;
-                await cacheSet(CACHE_KEYS.summary, summary);
-                renderDashboardFromState();
-                console.log('[CACHE] Dashboard rendered with summary records.');
-
-                // 2b) In the background, fetch the full dataset and populate the full cache.
-                console.log('[CACHE] Fetching full records in background...');
-                fetchAllAirtableRecords().then(async allRecords => {
-                    await cacheSet(CACHE_KEYS.full, allRecords);
-                    await cacheSet(CACHE_KEYS.meta, { lastFullSyncISO: new Date().toISOString() });
-                    state.records = mergeById(summary, allRecords);
-                    if (state.currentView === 'dashboard') renderDashboardFromState();
-                    console.log('[CACHE] Full records cached in background.');
-                }).catch(e => console.error('Background full sync failed:', e));
-                
-            } catch (error) {
-                contentArea.innerHTML = `<p class="text-red-500">Failed to load dashboard data. ${error.message}</p>`;
             }
         }
 
@@ -901,7 +870,7 @@ Notes for Production:
                     state.records.push(newFullRecord);
                     await cacheSet(CACHE_KEYS.full, state.records);
                     
-                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
                     await cacheSet(CACHE_KEYS.summary, summary);
 
                     showToast("Card added successfully!");
@@ -916,7 +885,7 @@ Notes for Production:
                         state.selectedCard = updatedRecord;
                     }
                     await cacheSet(CACHE_KEYS.full, state.records);
-                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
                     await cacheSet(CACHE_KEYS.summary, summary);
                     navigate('card-detail', { recordId });
                 }
@@ -930,37 +899,21 @@ Notes for Production:
 
         // --- AUDIT MODULE ---
         async function initAudit(location = null, page = 1) {
-            showLoader();
-            try {
-                if (state.records.length === 0) {
-                    const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
-                    if(cachedRecords) {
-                        state.records = cachedRecords;
-                    } else {
-                        state.records = await fetchAllAirtableRecords();
-                        await cacheSet(CACHE_KEYS.full, state.records);
-                        const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
-                        await cacheSet(CACHE_KEYS.summary, summary);
-                    }
-                }
-                
-                state.auditSelectedLocation = location;
-                state.auditCurrentPage = page;
+            await ensureDataLoaded();
+            
+            state.auditSelectedLocation = location;
+            state.auditCurrentPage = page;
 
-                if (location) {
-                    renderAuditLocationDetail();
-                } else {
-                    renderAuditSummary();
-                }
-            } catch (error) {
-                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Failed to load audit data. Check credentials and console.</p>`;
+            if (location) {
+                renderAuditLocationDetail();
+            } else {
+                renderAuditSummary();
             }
         }
         
         function renderAuditSummary() {
             const contentArea = document.getElementById('content-area');
             
-            // Original Location Audit Logic
             const locationCounts = state.records.reduce((acc, record) => {
                 const loc = record.Location || 'Uncategorized';
                 acc[loc] = (acc[loc] || 0) + 1;
@@ -968,7 +921,6 @@ Notes for Production:
             }, {});
             const sortedLocations = Object.entries(locationCounts).sort((a, b) => a[0].localeCompare(b[0]));
 
-            // New Photo Audit Logic
             const photoAuditCounts = state.records.reduce((acc, record) => {
                 const loc = record.Location || 'Uncategorized';
                 if (!acc[loc]) {
@@ -1141,18 +1093,7 @@ Notes for Production:
         
         // --- SEARCH MODULE ---
         async function initSearch(query = '', page = 1) {
-            if (state.records.length === 0) {
-                 const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
-                if(cachedRecords) {
-                    state.records = cachedRecords;
-                } else {
-                    showLoader();
-                    state.records = await fetchAllAirtableRecords();
-                    await cacheSet(CACHE_KEYS.full, state.records);
-                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
-                    await cacheSet(CACHE_KEYS.summary, summary);
-                }
-            }
+            await ensureDataLoaded();
             renderSearchView();
             const input = document.getElementById('search-query');
             const btn = document.getElementById('search-btn');
@@ -1251,51 +1192,50 @@ Notes for Production:
         }
 
         // --- CARD DETAIL MODULE ---
-        async function updateCardLocation(recordId, newLocation) {
-            if (!newLocation || !recordId) return;
+        async function getSingleRecord(recordId) {
+            let card = state.records.find(r => r.id === recordId);
+            const isSummary = card && !card.hasOwnProperty('Subset'); 
 
-            try {
-                await airtableFetch('PATCH', `/${recordId}`, { fields: { 'Location': newLocation } });
-
-                const recordIndex = state.records.findIndex(r => r.id === recordId);
-                if (recordIndex !== -1) {
-                    state.records[recordIndex].Location = newLocation;
+            if (isSummary) {
+                const fullCache = await cacheGet(CACHE_KEYS.full);
+                if (fullCache) {
+                    const fullCard = fullCache.find(r => r.id === recordId);
+                    if (fullCard) return fullCard;
                 }
-                if (state.selectedCard?.id === recordId) {
-                    state.selectedCard.Location = newLocation;
-                }
-                await cacheSet(CACHE_KEYS.full, state.records);
-                const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
-                await cacheSet(CACHE_KEYS.summary, summary);
-
-
-                showToast('Location updated!');
-                renderCardDetail(); // Re-render to show static text and hide editor
-            } catch (error) {
-                showToast('Failed to update location.', 'error');
             }
+            
+            // If not in full cache or it's a summary, fetch from network
+            if (!card || isSummary) {
+                 try {
+                    console.log(`[CACHE] Full record for ${recordId} not found in cache. Fetching from network.`);
+                    const data = await airtableFetch('GET', `/${recordId}`);
+                    card = { id: data.id, ...data.fields };
+                    
+                    // Update caches with the newly fetched full record
+                    const fullCache = (await cacheGet(CACHE_KEYS.full)) || [];
+                    const updatedFull = mergeById(fullCache, [card]);
+                    await cacheSet(CACHE_KEYS.full, updatedFull);
+                    state.records = mergeById(state.records, [card]); // update in-memory state too
+
+                    return card;
+                } catch(e) {
+                    return null;
+                }
+            }
+            return card;
         }
 
         async function initCardDetail(recordId) {
             showLoader();
-             if (state.records.length === 0) {
-                const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
-                if(cachedRecords) {
-                    state.records = cachedRecords;
-                } else {
-                    state.records = await fetchAllAirtableRecords();
-                    await cacheSet(CACHE_KEYS.full, state.records);
-                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
-                    await cacheSet(CACHE_KEYS.summary, summary);
-                }
-            }
+            await ensureDataLoaded();
             
-            const card = state.records.find(r => r.id === recordId);
-            if(card) {
+            const card = await getSingleRecord(recordId);
+
+            if (card) {
                 state.selectedCard = card;
                 renderCardDetail();
             } else {
-                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not find card with ID ${recordId}. It may not be in the cache yet. Try refreshing.</p>`;
+                 document.getElementById('content-area').innerHTML = `<p class="text-red-500">Could not find or fetch card with ID ${recordId}.</p>`;
             }
         }
 
@@ -2134,6 +2074,15 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 default: initDashboard();
             }
         }
+        
+        async function forceRefreshData() {
+            showToast("Cache cleared. Fetching fresh data...");
+            await cacheDel(CACHE_KEYS.summary);
+            await cacheDel(CACHE_KEYS.full);
+            await cacheDel(CACHE_KEYS.meta);
+            state.records = [];
+            navigate('dashboard');
+        }
 
         function renderAppShell() {
             appContainer.innerHTML = `
@@ -2159,12 +2108,13 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 <div id="config-container" class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md mb-6" role="alert">
                     <p class="font-bold">Configuration</p>
                     <p>Enter your API credentials below. These are stored only in your browser.</p>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-2 items-end">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mt-2 items-end">
                         <div><label for="apiKey" class="block text-sm font-medium">Airtable API Key</label><input type="password" id="apiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="patoHcB5BiGzANgna.d321310ecb88397b355eb522eec25c5fe713cff791f6e431ce17bb703ff3ee77"></div>
                         <div><label for="baseId" class="block text-sm font-medium">Airtable Base ID</label><input type="text" id="baseId" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="app7DQrgI2EZ3ogzq"></div>
                         <div><label for="tableName" class="block text-sm font-medium">Airtable Table Name</label><input type="text" id="tableName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" value="Inventory"></div>
                         <div><label for="geminiApiKey" class="block text-sm font-medium">Gemini API Key</label><input type="password" id="geminiApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2"></div>
                         <div><label for="imgbbApiKey" class="block text-sm font-medium">ImgBB API Key</label><input type="password" id="imgbbApiKey" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2"></div>
+                        <div><button id="force-refresh-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md w-full">Force Refresh Data</button></div>
                     </div>
                 </div>
                 <main id="content-area"></main>
@@ -2175,6 +2125,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
         function initApp() {
             renderAppShell();
             
+            document.getElementById('force-refresh-btn').addEventListener('click', forceRefreshData);
+
             document.getElementById('theme-toggle').addEventListener('click', () => {
               const root = document.documentElement;
               const isDark = root.classList.toggle('dark');
@@ -2270,8 +2222,9 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                 onConfirm: async () => {
                                     await airtableFetch('DELETE', `/${card.id}`);
                                     state.records = state.records.filter(r => r.id !== card.id);
+                                    // FIX: Update cache on delete
                                     await cacheSet(CACHE_KEYS.full, state.records);
-                                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location }));
+                                    const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
                                     await cacheSet(CACHE_KEYS.summary, summary);
                                     hideConfirmationModal();
                                     showToast('Card deleted.');
@@ -2417,6 +2370,4 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
     </script>
 </body>
 </html>
-
-
 
