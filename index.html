@@ -309,9 +309,8 @@ Notes for Production:
             return { updatedCount: updated.length, records: mergedFull };
         }
         
-        // ---- OPTIMIZED: Central data loading function for all modules ----
         async function ensureDataLoaded() {
-            if (state.records.length > 0) return; // Already loaded in this session
+            if (state.records.length > 0) return;
 
             const cachedRecords = await cacheGet(CACHE_KEYS.full) || await cacheGet(CACHE_KEYS.summary);
             if (cachedRecords) {
@@ -320,7 +319,6 @@ Notes for Production:
                 return;
             }
             
-            // If no cache, fetch fresh
             showLoader();
             console.log('[CACHE] No cache, fetching all records for initial load...');
             state.records = await fetchAllAirtableRecords();
@@ -608,13 +606,13 @@ Notes for Production:
                         <!-- Front Scan -->
                         <div class="text-center">
                             <img id="scan-preview-front" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Front">
-                            <input type="file" id="card-scan-front-input" class="hidden" accept="image/*" capture="environment">
+                            <input type="file" id="card-scan-front-input" class="hidden" accept="image/*">
                             <button data-side="front" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Front</button>
                         </div>
                         <!-- Back Scan -->
                         <div class="text-center">
                              <img id="scan-preview-back" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Back">
-                            <input type="file" id="card-scan-back-input" class="hidden" accept="image/*" capture="environment">
+                            <input type="file" id="card-scan-back-input" class="hidden" accept="image/*">
                             <button data-side="back" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Back</button>
                         </div>
                     </div>
@@ -1204,18 +1202,16 @@ Notes for Production:
                 }
             }
             
-            // If not in full cache or it's a summary, fetch from network
             if (!card || isSummary) {
                  try {
                     console.log(`[CACHE] Full record for ${recordId} not found in cache. Fetching from network.`);
                     const data = await airtableFetch('GET', `/${recordId}`);
                     card = { id: data.id, ...data.fields };
                     
-                    // Update caches with the newly fetched full record
                     const fullCache = (await cacheGet(CACHE_KEYS.full)) || [];
                     const updatedFull = mergeById(fullCache, [card]);
                     await cacheSet(CACHE_KEYS.full, updatedFull);
-                    state.records = mergeById(state.records, [card]); // update in-memory state too
+                    state.records = mergeById(state.records, [card]);
 
                     return card;
                 } catch(e) {
@@ -1254,7 +1250,7 @@ Notes for Production:
                 backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to ${state.fromView.params.location}</a>`;
 
             } else if (state.fromView?.view === 'search') {
-                contextualRecords = state.searchResults; // Already sorted/filtered
+                contextualRecords = state.searchResults;
                  backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back to Search</a>`;
             } else if (state.fromView?.view === 'audit-photo') {
                  contextualRecords = state.records
