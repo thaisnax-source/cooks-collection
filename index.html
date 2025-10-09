@@ -666,7 +666,8 @@ Notes for Production:
                 document.getElementById('scan-status').textContent = 'Success! Populating form...';
                 navigate('intake', { record: extractedData });
             } catch (error) {
-                showToast(`AI analysis failed: ${error.message}`, 'error');
+                console.error("Full Gemini Vision Error:", error);
+                showToast(`AI analysis failed: ${error.message}. Check console for details.`, 'error');
                 document.getElementById('scan-status').textContent = `Analysis failed. Please try again.`;
                 document.getElementById('analyze-btn').disabled = false;
                 document.getElementById('scan-loader-area').classList.add('hidden');
