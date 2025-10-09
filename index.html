@@ -606,13 +606,11 @@ Notes for Production:
                         <!-- Front Scan -->
                         <div class="text-center">
                             <img id="scan-preview-front" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Front">
-                            <input type="file" id="card-scan-front-input" class="hidden" accept="image/*">
                             <button data-side="front" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Front</button>
                         </div>
                         <!-- Back Scan -->
                         <div class="text-center">
                              <img id="scan-preview-back" class="w-full h-auto object-contain rounded-lg shadow-md mb-4 bg-gray-100 dark:bg-gray-700 aspect-[2.5/3.5]" src="https://placehold.co/400x560/eee/ccc?text=Back">
-                            <input type="file" id="card-scan-back-input" class="hidden" accept="image/*">
                             <button data-side="back" class="card-scan-btn bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg w-full">Upload Back</button>
                         </div>
                     </div>
@@ -625,11 +623,12 @@ Notes for Production:
                     </div>
                 </div>
             `;
-            document.querySelectorAll('.card-scan-btn').forEach(btn => 
-                btn.addEventListener('click', () => document.getElementById(`card-scan-${btn.dataset.side}-input`).click())
-            );
-            document.getElementById('card-scan-front-input').addEventListener('change', (e) => handleCardScan(e, 'front'));
-            document.getElementById('card-scan-back-input').addEventListener('change', (e) => handleCardScan(e, 'back'));
+            document.querySelectorAll('.card-scan-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.photoUploadTarget = `scan-${btn.dataset.side}`;
+                    document.getElementById('photo-upload-input').click();
+                });
+            });
             document.getElementById('analyze-btn').addEventListener('click', analyzeCardImages);
         }
 
@@ -2305,6 +2304,13 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             async function handlePhotoUpload(e) {
                 const file = e.target.files?.[0];
                 if (!file) return;
+
+                if (state.photoUploadTarget?.startsWith('scan-')) {
+                    const side = state.photoUploadTarget.split('-')[1];
+                    handleCardScan(e, side);
+                    e.target.value = ''; // Reset file input
+                    return;
+                }
 
                 const { imgbbApiKey } = getCredentials();
                 if (!imgbbApiKey) {
