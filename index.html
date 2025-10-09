@@ -2005,16 +2005,23 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             const payload = { contents: [{ parts }] };
 
             const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            if (!response.ok) throw new Error(`Gemini Vision API error: ${response.statusText}`);
-            const data = await response.json();
             
-            if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+            const result = await response.json();
+
+            if (!response.ok) {
+                console.error("Gemini API Error Response:", result);
+                throw new Error(result.error?.message || `Gemini Vision API error: ${response.statusText}`);
+            }
+            
+            if (!result.candidates || !result.candidates[0].content || !result.candidates[0].content.parts || !result.candidates[0].content.parts[0].text) {
+                console.error("Invalid Gemini Response Structure:", result);
                 throw new Error("Invalid response structure from Gemini Vision API.");
             }
 
-            const textResponse = data.candidates[0].content.parts[0].text;
+            const textResponse = result.candidates[0].content.parts[0].text;
             const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
             if (!jsonMatch) {
+                console.error("No JSON in Gemini Response:", textResponse);
                 throw new Error("Could not find a valid JSON object in the Gemini Vision response.");
             }
             return JSON.parse(jsonMatch[0]);
