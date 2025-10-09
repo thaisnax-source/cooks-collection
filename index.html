@@ -1995,10 +1995,10 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             
             const parts = [{ text: prompt }];
             if(frontData) {
-                parts.push({ inline_data: { mime_type: frontData.mimeType, data: frontData.base64 } });
+                parts.push({ inlineData: { mimeType: frontData.mimeType, data: frontData.base64 } });
             }
              if(backData) {
-                parts.push({ inline_data: { mime_type: backData.mimeType, data: backData.base64 } });
+                parts.push({ inlineData: { mimeType: backData.mimeType, data: backData.base64 } });
             }
             
             const payload = { contents: [{ parts }] };
