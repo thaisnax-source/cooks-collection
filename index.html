@@ -439,6 +439,46 @@ Notes for Production:
             return html;
         }
 
+        // New Helper Function for Cert Links
+        function generateCertLink(card) {
+            const company = (card['Grading Company'] || '').toLowerCase().trim();
+            const serial = card['Cert/Serial'];
+
+            if (!company || !serial || serial === 'None') {
+                return null;
+            }
+            
+            // Use encodeURIComponent to handle special characters in serial numbers
+            const encodedSerial = encodeURIComponent(serial);
+
+            let url = '';
+            switch (company) {
+                case "psa":
+                    url = `https://www.psacard.com/cert/${encodedSerial}`;
+                    break;
+                case "sgc":
+                case "sgc card":
+                    url = `https://www.gosgc.com/cert-code-lookup?code=${encodedSerial}`;
+                    break;
+                case "cgc":
+                    url = `https://www.cgccards.com/certlookup/${encodedSerial}/`;
+                    break;
+                case "bgs":
+                case "beckett":
+                    url = `https://www.beckett.com/grading/card-lookup?item_id=${encodedSerial}`;
+                    break;
+                case "bccg":
+                    url = `https://www.beckett.com/grading/card-lookup?item_id=${encodedSerial}&item_type=BCCG`;
+                    break;
+                case "sqc":
+                    url = `https://www.sqccard.com/en/search&text=${encodedSerial}`;
+                    break;
+                default:
+                    return null; 
+            }
+            return url;
+        }
+
 
         // --- DASHBOARD MODULE ---
         async function initDashboard() {
@@ -1355,6 +1395,12 @@ Notes for Production:
                            `).join('');
             };
 
+            const certUrl = generateCertLink(card);
+            let certHtml = card['Cert/Serial'] || '';
+            if (certUrl) {
+                certHtml = `<a href="${certUrl}" target="_blank" class="text-indigo-500 hover:underline">${card['Cert/Serial']}</a>`;
+            }
+
             const cardInfoRows = [
                 { label: 'Year', value: card.Year },
                 { label: 'Set', value: card.Set },
@@ -1368,11 +1414,22 @@ Notes for Production:
             const gradingInfoRows = [
                 { label: 'Company', value: card['Grading Company'] },
                 { label: 'Grade', value: card.Grade },
-                { label: 'Cert/Serial', value: card['Cert/Serial'] },
+                // Cert/Serial will be handled separately to render HTML
             ];
 
             const cardInfoContent = buildDetailRows(cardInfoRows);
-            const gradingInfoContent = buildDetailRows(gradingInfoRows);
+            let gradingInfoContent = buildDetailRows(gradingInfoRows);
+
+            // Manually append the Cert/Serial row to ensure the link renders as HTML
+            if (card['Cert/Serial'] && card['Cert/Serial'] !== 'None') {
+                const certRowIndex = gradingInfoRows.length; // This will be 2
+                gradingInfoContent += `
+                    <div class="flex justify-between py-3 px-4 ${certRowIndex % 2 === 0 ? 'bg-slate-50 dark:bg-gray-800/50' : ''}">
+                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Cert/Serial</dt>
+                        <dd class="text-base text-right font-medium">${certHtml}</dd>
+                    </div>
+                `;
+            }
 
             const renderDetailCard = (title, content) => {
                 if (!content || !content.trim()) return '';
@@ -2423,4 +2480,6 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
     </script>
 </body>
 </html>
+
+
 
