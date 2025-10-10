@@ -448,7 +448,6 @@ Notes for Production:
                 return null;
             }
             
-            // Use encodeURIComponent to handle special characters in serial numbers
             const encodedSerial = encodeURIComponent(serial);
 
             let url = '';
@@ -477,6 +476,13 @@ Notes for Production:
                     return null; 
             }
             return url;
+        }
+
+        // New Helper for finding parallels
+        function findParallels(year, set) {
+            const query = `what are the parallels for ${year} ${set}`;
+            const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+            window.open(url, '_blank');
         }
 
 
@@ -826,7 +832,13 @@ Notes for Production:
                                             <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Year *</label><input name="Year" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Year || ''}"/></div>
                                             <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Card # *</label><input name="Card#" required class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Card#'] || ''}"/></div>
                                             <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Subset</label><input name="Subset" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Subset || ''}"/></div>
-                                            <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Parallel</label><input name="Parallel" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Parallel || ''}"/></div>
+                                            <div>
+                                                <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Parallel</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input name="Parallel" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.Parallel || ''}"/>
+                                                    <button type="button" id="find-parallels-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-3 rounded-md text-sm mt-1">Find</button>
+                                                </div>
+                                            </div>
                                             <div><label class="block text-sm font-bold text-gray-700 dark:text-gray-300">Limited #</label><input name="Limited#" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-indigo-500 focus:border-indigo-500" value="${record?.['Limited#'] || ''}"/></div>
                                         </div>
                                     </div>
@@ -872,6 +884,15 @@ Notes for Production:
                 });
             });
             document.getElementById('intake-form').addEventListener('submit', handleIntakeSubmit);
+            document.getElementById('find-parallels-btn').addEventListener('click', () => {
+                const year = document.querySelector('input[name="Year"]').value;
+                const set = document.querySelector('input[name="Set"]').value;
+                if (!year || !set) {
+                    showToast('Please enter a Year and Set to find parallels.', 'error');
+                    return;
+                }
+                findParallels(year, set);
+            });
         }
         
         async function handleIntakeSubmit(e) {
@@ -2404,7 +2425,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 if(compsCancelBtn || e.target === document.getElementById('run-comps-modal')) {
                     document.getElementById('run-comps-modal').classList.remove('show');
                 }
-
+                
                 if (e.target.id === 'modal-confirm-btn' && state._modalConfirmCallback) state._modalConfirmCallback();
                 if (e.target.id === 'modal-cancel-btn' || e.target === document.getElementById('confirmation-modal')) hideConfirmationModal();
             });
@@ -2480,6 +2501,4 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
     </script>
 </body>
 </html>
-
-
 
