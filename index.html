@@ -107,6 +107,17 @@ Notes for Production:
         .dark .photo-dropzone { border-color: #4b5563; }
         .photo-dropzone.dragover { border-color: #4f46e5; background-color: #eef2ff; }
         .dark .photo-dropzone.dragover { background-color: #312e81; }
+        #magnifier-lens {
+            position: absolute;
+            border: 3px solid #6366f1; /* indigo-500 */
+            border-radius: 50%;
+            width: 150px;
+            height: 150px;
+            background-repeat: no-repeat;
+            pointer-events: none;
+            z-index: 10;
+            display: none; /* Controlled by JS */
+        }
     </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-300">
@@ -1569,7 +1580,17 @@ Notes for Production:
                     { label: 'Time Sold', value: soldTime },
                 ];
                 
-                saleSectionHTML = renderDetailCard('✅ Sale Details', buildDetailRowsWithHTML(soldInfoRows));
+                saleSectionHTML = `
+                    <div class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                        <div class="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b dark:border-gray-700">
+                            <div class="flex justify-between items-center">
+                                <h4 class="font-bold">✅ Sale Details</h4>
+                                <button data-action="remove-sale" class="text-xs font-medium text-red-500 hover:text-red-700 hover:underline">Remove Sale</button>
+                            </div>
+                        </div>
+                        <div>${buildDetailRowsWithHTML(soldInfoRows)}</div>
+                    </div>
+                `;
                 
             } else {
                 saleSectionHTML = `
@@ -1609,7 +1630,9 @@ Notes for Production:
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
                         <div class="md:col-span-1 space-y-4">
                             <div id="photo-display-container" class="space-y-2">
-                                <img id="card-image-display" src="${card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image'}" alt="Card Photo" class="rounded-lg w-full shadow-lg">
+                                <div id="photo-magnifier-container" class="relative cursor-crosshair">
+                                    <img id="card-image-display" src="${card.FrontPhoto?.[0]?.url || 'https://placehold.co/400x560/eee/ccc?text=No+Front+Image'}" alt="Card Photo" class="rounded-lg w-full shadow-lg">
+                                </div>
                                 <div id="photo-controls" class="flex justify-center items-center space-x-4"></div>
                                 <div class="mt-4 text-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                                     <div id="location-display-view">
@@ -1682,6 +1705,8 @@ Notes for Production:
                     });
                 }
             }
+            
+            setupImageMagnifier();
         }
         
         // --- PRICING MODULE START ---
@@ -2332,6 +2357,46 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             }
         }
 
+        async function handleRemoveSale(recordId) {
+            hideConfirmationModal();
+            const removeBtn = document.querySelector('[data-action="remove-sale"]');
+            if (removeBtn) {
+                removeBtn.disabled = true;
+                removeBtn.textContent = 'Removing...';
+            }
+
+            const fields = {
+                'SOLD': false,
+                'Final_Sale_Price': null,
+                'Sold_Date': null
+            };
+
+            try {
+                await airtableFetch('PATCH', `/${recordId}`, { fields, typecast: true });
+
+                const updatedFields = { SOLD: false, Final_Sale_Price: null, Sold_Date: null };
+                const card = state.selectedCard;
+                if (card && card.id === recordId) {
+                    state.selectedCard = { ...card, ...updatedFields };
+                }
+                const recordIndex = state.records.findIndex(r => r.id === recordId);
+                if (recordIndex !== -1) {
+                    state.records[recordIndex] = { ...state.records[recordIndex], ...updatedFields };
+                }
+                
+                await cacheSet(CACHE_KEYS.full, state.records);
+
+                showToast('Sale details have been removed.', 'success');
+                renderCardDetail();
+            } catch (error) {
+                showToast(`Failed to remove sale: ${error.message}`, 'error');
+                if (removeBtn) {
+                    removeBtn.disabled = false;
+                    removeBtn.textContent = 'Remove Sale';
+                }
+            }
+        }
+
         async function handleSaveSale(recordId) {
             const card = state.selectedCard;
             if (!card || card.id !== recordId) {
@@ -2381,6 +2446,59 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 showToast(`Failed to save sale: ${error.message}`, 'error');
                 saveSaleBtn.disabled = false;
                 saveSaleBtn.textContent = 'Confirm Sale';
+            }
+        }
+
+        function setupImageMagnifier() {
+            const container = document.getElementById('photo-magnifier-container');
+            const img = document.getElementById('card-image-display');
+            
+            if (!container || !img) return;
+
+            const oldLens = document.getElementById('magnifier-lens');
+            if (oldLens) oldLens.remove();
+
+            const lens = document.createElement('div');
+            lens.setAttribute('id', 'magnifier-lens');
+            container.appendChild(lens);
+
+            const setup = () => {
+                const zoomLevel = 2.5;
+                lens.style.backgroundImage = `url('${img.src}')`;
+                lens.style.backgroundSize = `${img.naturalWidth * zoomLevel}px ${img.naturalHeight * zoomLevel}px`;
+
+                const moveMagnifier = (e) => {
+                    const pos = getCursorPos(e);
+                    let x = pos.x - (lens.offsetWidth / 2);
+                    let y = pos.y - (lens.offsetHeight / 2);
+
+                    if (x > img.width - lens.offsetWidth) { x = img.width - lens.offsetWidth; }
+                    if (x < 0) { x = 0; }
+                    if (y > img.height - lens.offsetHeight) { y = img.height - lens.offsetHeight; }
+                    if (y < 0) { y = 0; }
+
+                    lens.style.left = `${x}px`;
+                    lens.style.top = `${y}px`;
+                    lens.style.backgroundPosition = `-${x * zoomLevel}px -${y * zoomLevel}px`;
+                }
+
+                const getCursorPos = (e) => {
+                    const a = img.getBoundingClientRect();
+                    const x = e.pageX - a.left - window.scrollX;
+                    const y = e.pageY - a.top - window.scrollY;
+                    return { x, y };
+                }
+
+                container.addEventListener('mousemove', moveMagnifier);
+            };
+            
+            container.addEventListener('mouseenter', () => lens.style.display = 'block');
+            container.addEventListener('mouseleave', () => lens.style.display = 'none');
+
+            if (img.complete) {
+                setup();
+            } else {
+                img.onload = setup;
             }
         }
 
@@ -2551,27 +2669,41 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     return;
                 }
 
-                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"], [data-action^="navigate"], [data-action="save-sale"]');
+                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"], [data-action^="navigate"], [data-action="save-sale"], [data-action="remove-sale"]');
                 if (actionButton) {
                     const { action, recordId } = actionButton.dataset;
                     const card = state.selectedCard;
-                    if (!card && !recordId && action !== 'save-sale') return;
-                    if (!card && action === 'save-sale') return;
-
+                    
+                    if (!card && !recordId && !['save-sale', 'remove-sale'].includes(action)) return;
+                    if (!card && ['save-sale', 'remove-sale'].includes(action)) return;
 
                     switch (action) {
-                        case 'edit': return navigate('edit-card', { record: card });
-                        case 'add-another': return navigate('intake', { record: { ...card }, isDuplicate: true });
-                        case 'run-comps': return executeRunComps(card);
-                        case 'save-sale': return handleSaveSale(card.id);
+                        case 'edit': 
+                            navigate('edit-card', { record: card });
+                            break;
+                        case 'add-another': 
+                            navigate('intake', { record: { ...card }, isDuplicate: true });
+                            break;
+                        case 'run-comps': 
+                            executeRunComps(card);
+                            break;
+                        case 'save-sale': 
+                            handleSaveSale(card.id);
+                            break;
+                        case 'remove-sale':
+                            showConfirmationModal({
+                                title: 'Remove Sale?',
+                                body: 'This will remove the sale price and date, and mark the card as unsold. Are you sure?',
+                                onConfirm: () => handleRemoveSale(card.id)
+                            });
+                            break;
                         case 'delete':
-                            return showConfirmationModal({
+                            showConfirmationModal({
                                 title: 'Delete Card?',
                                 body: `Permanently delete Card ID ${card.CardID} (${card.Player})? This cannot be undone.`,
                                 onConfirm: async () => {
                                     await airtableFetch('DELETE', `/${card.id}`);
                                     state.records = state.records.filter(r => r.id !== card.id);
-                                    // FIX: Update cache on delete
                                     await cacheSet(CACHE_KEYS.full, state.records);
                                     const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
                                     await cacheSet(CACHE_KEYS.summary, summary);
@@ -2580,6 +2712,7 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                     navigate('audit');
                                 }
                             });
+                            break;
                         case 'edit-location-start': {
                             document.getElementById('location-display-view').classList.add('hidden');
                             const editView = document.getElementById('location-edit-view');
@@ -2590,12 +2723,12 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                             select.onchange = () => {
                                 document.getElementById('card-detail-location-manual').classList.toggle('hidden', select.value !== '__addNew__');
                             };
-                            return;
+                            break;
                         }
                         case 'edit-location-cancel': {
                             document.getElementById('location-display-view').classList.remove('hidden');
                             document.getElementById('location-edit-view').classList.add('hidden');
-                            return;
+                            break;
                         }
                         case 'edit-location-save': {
                             const select = document.getElementById('card-detail-location-select');
@@ -2603,16 +2736,17 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                                 ? document.getElementById('card-detail-location-manual').value.trim()
                                 : select.value;
                             updateCardLocation(card.id, newLocation);
-                            return;
+                            break;
                         }
                         case 'navigate-prev':
                         case 'navigate-next': {
                             if (recordId) {
                                 navigate('card-detail', { recordId, from: state.fromView });
                             }
-                            return;
+                            break;
                         }
                     }
+                    return;
                 }
                 
                 const locationLink = e.target.closest('.audit-location-link');
