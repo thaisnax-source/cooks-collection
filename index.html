@@ -243,7 +243,9 @@ Notes for Production:
                         const errorData = await response.json();
                         console.error('Airtable Error details:', errorData);
                         errorText = errorData.error?.message || errorText;
-                    } catch {}
+                    } catch (e) {
+                        // ignore if response body is not json
+                    }
                     throw new Error(errorText);
                 }
                 return response.json();
@@ -269,7 +271,7 @@ Notes for Production:
                 const data = await airtableFetch('GET', path);
                 const batch = (data.records || []).map(r => ({ id: r.id, ...r.fields }));
                 all = all.concat(batch);
-                if (typeof onBatch === 'function') { try { onBatch(batch); } catch {} }
+                if (typeof onBatch === 'function') { try { onBatch(batch); } catch(e) { /* ignore */ } }
                 offset = data.offset;
             } while (offset);
 
@@ -1296,13 +1298,17 @@ Notes for Production:
         // --- CARD DETAIL MODULE ---
         async function getSingleRecord(recordId) {
             let card = state.records.find(r => r.id === recordId);
-            const isSummary = card && !card.hasOwnProperty('Subset'); 
+            // A summary record might not have all fields. We check for a field that only full records have.
+            // Also check for sale fields, if they are missing, we need the full record.
+            const isSummary = card && (!card.hasOwnProperty('Subset') || !card.hasOwnProperty('SOLD')); 
 
             if (isSummary) {
                 const fullCache = await cacheGet(CACHE_KEYS.full);
                 if (fullCache) {
                     const fullCard = fullCache.find(r => r.id === recordId);
-                    if (fullCard) return fullCard;
+                    if (fullCard) {
+                        return fullCard;
+                    }
                 }
             }
             
@@ -1319,6 +1325,7 @@ Notes for Production:
 
                     return card;
                 } catch(e) {
+                    console.error(`Failed to fetch full record for ${recordId}:`, e);
                     return null;
                 }
             }
@@ -1342,7 +1349,9 @@ Notes for Production:
         function renderCardDetail() {
             const contentArea = document.getElementById('content-area');
             const card = state.selectedCard;
-            if (!card) return;
+            if (!card) {
+                return;
+            }
             
             let backLinkHTML = `<a href="#" id="back-link" class="text-indigo-500 hover:underline flex-shrink-0 ml-4">&larr; Back</a>`;
             
@@ -1387,23 +1396,95 @@ Notes for Production:
                 `;
             }
 
-
-            const currentSticker = card['Current Sticker'] || 0;
-            const originalSticker = card['Original Sticker'] || 0;
-            const delta = currentSticker - originalSticker;
-            let deltaHTML = '';
-            if (originalSticker > 0) {
-                if (delta > 0) {
-                    deltaHTML = `<p class="text-lg font-bold text-green-600 dark:text-green-400">↑ ${formatCurrency(delta, 'THB')}</p>`;
-                } else if (delta < 0) {
-                    deltaHTML = `<p class="text-lg font-bold text-red-600 dark:text-red-400">↓ ${formatCurrency(Math.abs(delta), 'THB')}</p>`;
-                } else {
-                    deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">• No Change</p>`;
+            const formatSoldDate = (isoString) => {
+                if (!isoString) return { date: 'N/A', time: 'N/A' };
+                try {
+                    const date = new Date(isoString);
+                    const dateOptions = { year: 'numeric', month: 'long', day: 'numeric' };
+                    const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
+                    return {
+                        date: date.toLocaleDateString('en-GB', dateOptions),
+                        time: date.toLocaleTimeString('en-GB', timeOptions)
+                    };
+                } catch (e) {
+                    return { date: 'Invalid Date', time: '' };
                 }
-            } else if (currentSticker > 0) {
-                 deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">First Sticker</p>`;
+            };
+
+            const buildDetailRowsWithHTML = (rows) => {
+                 return rows.filter(row => row.value !== undefined && row.value !== null && row.value !== '')
+                           .map((row, index) => `
+                            <div class="flex justify-between py-3 px-4 ${index % 2 === 0 ? 'bg-slate-50 dark:bg-gray-800/50' : ''}">
+                                <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">${row.label}</dt>
+                                <dd class="text-base text-right font-medium">${row.value}</dd>
+                            </div>
+                           `).join('');
+            };
+
+
+            let mainPriceDisplayHTML = '';
+            let deltaDisplayHTML = '';
+
+            if (card.SOLD) {
+                const finalSalePrice = card.Final_Sale_Price || 0;
+                const lastStickerPrice = card['Current Sticker'] || 0;
+                const profitLoss = finalSalePrice - lastStickerPrice;
+
+                mainPriceDisplayHTML = `
+                    <div class="bg-green-50 dark:bg-green-900/50 border border-green-500 rounded-lg p-4 text-center">
+                        <h4 class="text-sm font-medium text-green-800 dark:text-green-300">FINAL SALE PRICE</h4>
+                        <p class="text-4xl font-bold text-green-600 dark:text-green-400">${formatCurrency(finalSalePrice, 'THB')}</p>
+                    </div>
+                `;
+
+                let profitLossContent = '';
+                if (profitLoss > 0) {
+                    profitLossContent = `<p class="text-lg font-bold text-green-600 dark:text-green-400">↑ ${formatCurrency(profitLoss, 'THB')}</p>`;
+                } else if (profitLoss < 0) {
+                    profitLossContent = `<p class="text-lg font-bold text-red-600 dark:text-red-400">↓ ${formatCurrency(Math.abs(profitLoss), 'THB')}</p>`;
+                } else {
+                    profitLossContent = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">• Break Even</p>`;
+                }
+
+                deltaDisplayHTML = `
+                    <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">PROFIT / LOSS</h4>
+                        ${profitLossContent}
+                    </div>
+                `;
+
             } else {
-                 deltaHTML = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">—</p>`;
+                const currentSticker = card['Current Sticker'] || 0;
+                const originalSticker = card['Original Sticker'] || 0;
+                const delta = currentSticker - originalSticker;
+                let deltaContent = '';
+                if (originalSticker > 0) {
+                    if (delta > 0) {
+                        deltaContent = `<p class="text-lg font-bold text-green-600 dark:text-green-400">↑ ${formatCurrency(delta, 'THB')}</p>`;
+                    } else if (delta < 0) {
+                        deltaContent = `<p class="text-lg font-bold text-red-600 dark:text-red-400">↓ ${formatCurrency(Math.abs(delta), 'THB')}</p>`;
+                    } else {
+                        deltaContent = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">• No Change</p>`;
+                    }
+                } else if (currentSticker > 0) {
+                    deltaContent = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">First Sticker</p>`;
+                } else {
+                    deltaContent = `<p class="text-lg font-bold text-gray-500 dark:text-gray-400">—</p>`;
+                }
+
+                mainPriceDisplayHTML = `
+                    <div class="bg-indigo-50 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4 text-center">
+                        <h4 class="text-sm font-medium text-indigo-800 dark:text-indigo-300">CURRENT STICKER</h4>
+                        <p class="text-4xl font-bold text-indigo-900 dark:text-indigo-200">${formatCurrency(currentSticker, 'THB')}</p>
+                    </div>
+                `;
+
+                deltaDisplayHTML = `
+                    <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">STICKER DELTA</h4>
+                        ${deltaContent}
+                    </div>
+                `;
             }
             
             const buildDetailRows = (rows) => {
@@ -1463,6 +1544,55 @@ Notes for Production:
                     </div>
                 `;
             };
+
+            let saleSectionHTML = '';
+             if (card.SOLD) {
+                const salePrice = card.Final_Sale_Price || 0;
+                const stickerPrice = card['Current Sticker'] || 0;
+                const difference = salePrice - stickerPrice;
+                const { date: soldDate, time: soldTime } = formatSoldDate(card.Sold_Date);
+
+                let diffHtml = '';
+                if (difference > 0) {
+                    diffHtml = `<span class="font-bold text-green-600 dark:text-green-400">↑ ${formatCurrency(difference, 'THB')}</span>`;
+                } else if (difference < 0) {
+                    diffHtml = `<span class="font-bold text-red-600 dark:text-red-400">↓ ${formatCurrency(Math.abs(difference), 'THB')}</span>`;
+                } else {
+                    diffHtml = `<span class="font-bold text-gray-500 dark:text-gray-400">• No Change</span>`;
+                }
+
+                const soldInfoRows = [
+                    { label: 'Final Sale Price', value: formatCurrency(salePrice, 'THB') },
+                    { label: 'Last Sticker Price', value: formatCurrency(stickerPrice, 'THB') },
+                    { label: 'Profit/Loss', value: diffHtml },
+                    { label: 'Date Sold', value: soldDate },
+                    { label: 'Time Sold', value: soldTime },
+                ];
+                
+                saleSectionHTML = renderDetailCard('✅ Sale Details', buildDetailRowsWithHTML(soldInfoRows));
+                
+            } else {
+                saleSectionHTML = `
+                    <div id="sell-card-section" class="border dark:border-gray-700 rounded-xl shadow-sm overflow-hidden">
+                        <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3 border-b dark:border-gray-700">
+                           <h4 class="font-bold">Sell Card</h4>
+                        </div>
+                        <div class="p-4 space-y-3">
+                            <div class="flex items-center">
+                                <input type="checkbox" id="mark-as-sold-checkbox" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+                                <label for="mark-as-sold-checkbox" class="ml-3 block text-sm font-medium">Mark as Sold</label>
+                            </div>
+                            <div id="sale-details-input" class="hidden pt-2 border-t dark:border-gray-600 space-y-2">
+                                <div>
+                                    <label for="final-sale-price" class="block text-sm font-bold text-gray-700 dark:text-gray-300">Final Sale Price (THB)</label>
+                                    <input type="number" step="10" id="final-sale-price" class="mt-1 block w-full rounded-md p-2 border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
+                                </div>
+                                <button data-action="save-sale" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Confirm Sale</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
             
             contentArea.innerHTML = `
                 <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
@@ -1503,14 +1633,8 @@ Notes for Production:
 
                         <div class="md:col-span-2 space-y-6">
                             <div class="grid grid-cols-2 gap-4">
-                                <div class="bg-indigo-50 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4 text-center">
-                                    <h4 class="text-sm font-medium text-indigo-800 dark:text-indigo-300">CURRENT STICKER</h4>
-                                    <p class="text-4xl font-bold text-indigo-900 dark:text-indigo-200">${formatCurrency(card['Current Sticker'], 'THB')}</p>
-                                </div>
-                                 <div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
-                                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">STICKER DELTA</h4>
-                                    ${deltaHTML}
-                                </div>
+                                ${mainPriceDisplayHTML}
+                                ${deltaDisplayHTML}
                                 <div class="col-span-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center border dark:border-gray-700">
                                     <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">ORIGINAL STICKER</h4>
                                     <p class="text-xl font-bold">${formatCurrency(card['Original Sticker'], 'THB')}</p>
@@ -1519,6 +1643,7 @@ Notes for Production:
 
                             ${renderDetailCard('Card Details', cardInfoContent)}
                             ${renderDetailCard('Grading', gradingInfoContent)}
+                            ${saleSectionHTML}
                             ${renderDetailCard('Comp Notes', parseAndRenderCompNotes(card['Comp Notes']))}
 
                             <div id="card-actions" class="flex flex-wrap items-center gap-4 pt-4 border-t dark:border-gray-700" data-record-id="${card.id}">
@@ -1546,6 +1671,17 @@ Notes for Production:
                  controlsHTML += `<div id="add-photo-BackPhoto"><button data-action="add-photo-start" data-field="BackPhoto" class="text-sm text-indigo-500 hover:underline">Add Back Photo</button></div>`;
             }
             photoControls.innerHTML = controlsHTML;
+
+            // Attach listeners for sale UI if card is not sold
+            if (!card.SOLD) {
+                const sellCheckbox = document.getElementById('mark-as-sold-checkbox');
+                const saleDetailsInput = document.getElementById('sale-details-input');
+                if (sellCheckbox && saleDetailsInput) {
+                    sellCheckbox.addEventListener('change', (e) => {
+                        saleDetailsInput.classList.toggle('hidden', !e.target.checked);
+                    });
+                }
+            }
         }
         
         // --- PRICING MODULE START ---
@@ -2167,11 +2303,94 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
             }
         }
 
+        async function updateCardLocation(recordId, newLocation) {
+            if (!newLocation) {
+                showToast('Location cannot be empty.', 'error');
+                return;
+            }
+            try {
+                const fields = { 'Location': newLocation };
+                await airtableFetch('PATCH', `/${recordId}`, { fields, typecast: true });
+
+                const card = state.selectedCard;
+                if (card && card.id === recordId) {
+                    card.Location = newLocation;
+                }
+                const recordIndex = state.records.findIndex(r => r.id === recordId);
+                if (recordIndex !== -1) {
+                    state.records[recordIndex].Location = newLocation;
+                }
+
+                await cacheSet(CACHE_KEYS.full, state.records);
+                const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                await cacheSet(CACHE_KEYS.summary, summary);
+
+                showToast('Location updated!');
+                renderCardDetail();
+            } catch (error) {
+                showToast(`Failed to update location: ${error.message}`, 'error');
+            }
+        }
+
+        async function handleSaveSale(recordId) {
+            const card = state.selectedCard;
+            if (!card || card.id !== recordId) {
+                return;
+            }
+
+            const finalPriceInput = document.getElementById('final-sale-price');
+            const saveSaleBtn = document.querySelector('[data-action="save-sale"]');
+            
+            if (!finalPriceInput || !saveSaleBtn) {
+                return;
+            }
+            
+            const finalPrice = parseFloat(finalPriceInput.value);
+
+            if (isNaN(finalPrice) || finalPrice < 0) {
+                showToast('Please enter a valid sale price.', 'error');
+                return;
+            }
+
+            saveSaleBtn.disabled = true;
+            saveSaleBtn.textContent = 'Saving...';
+
+            const fields = {
+                'SOLD': true,
+                'Final_Sale_Price': finalPrice,
+                'Sold_Date': new Date().toISOString()
+            };
+
+            try {
+                await airtableFetch('PATCH', `/${card.id}`, { fields, typecast: true });
+                
+                const updatedCard = { ...card, ...fields };
+                state.selectedCard = updatedCard;
+                const recordIndex = state.records.findIndex(r => r.id === card.id);
+                if (recordIndex !== -1) {
+                    state.records[recordIndex] = { ...state.records[recordIndex], ...fields };
+                }
+                
+                await cacheSet(CACHE_KEYS.full, state.records);
+                const summary = state.records.map(r => ({id: r.id, CardID: r.CardID, Player: r.Player, Set: r.Set, 'Current Sticker': r['Current Sticker'], Location: r.Location, FrontPhoto: r.FrontPhoto, BackPhoto: r.BackPhoto }));
+                await cacheSet(CACHE_KEYS.summary, summary);
+
+                showToast('Card marked as sold!', 'success');
+                renderCardDetail();
+            } catch (error) {
+                showToast(`Failed to save sale: ${error.message}`, 'error');
+                saveSaleBtn.disabled = false;
+                saveSaleBtn.textContent = 'Confirm Sale';
+            }
+        }
+
         // --- APP ROUTER & INITIALIZATION ---
         function navigate(view, params = {}) {
             state.currentView = view;
             const contentArea = document.getElementById('content-area');
-            if (!contentArea) return; 
+            if (!contentArea) {
+                return;
+            } 
             
             if(params.from) {
                 state.fromView = params.from;
@@ -2267,7 +2486,10 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
 
             document.addEventListener('click', (e) => {
                 const navLink = e.target.closest('.nav-link');
-                if (navLink) return navigate(navLink.dataset.view);
+                if (navLink) {
+                    navigate(navLink.dataset.view);
+                    return;
+                }
 
                 const cardLink = e.target.closest('.view-card-link');
                 if (cardLink) {
@@ -2329,16 +2551,19 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     return;
                 }
 
-                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"], [data-action^="navigate"]');
+                const actionButton = e.target.closest('#card-actions button, [data-action^="edit-location"], [data-action^="navigate"], [data-action="save-sale"]');
                 if (actionButton) {
                     const { action, recordId } = actionButton.dataset;
                     const card = state.selectedCard;
-                    if (!card && !recordId) return;
+                    if (!card && !recordId && action !== 'save-sale') return;
+                    if (!card && action === 'save-sale') return;
+
 
                     switch (action) {
                         case 'edit': return navigate('edit-card', { record: card });
                         case 'add-another': return navigate('intake', { record: { ...card }, isDuplicate: true });
                         case 'run-comps': return executeRunComps(card);
+                        case 'save-sale': return handleSaveSale(card.id);
                         case 'delete':
                             return showConfirmationModal({
                                 title: 'Delete Card?',
@@ -2393,7 +2618,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 const locationLink = e.target.closest('.audit-location-link');
                 if(locationLink){
                     e.preventDefault();
-                    return navigate('audit', { location: locationLink.dataset.location, page: 1 });
+                    navigate('audit', { location: locationLink.dataset.location, page: 1 });
+                    return;
                 }
                 
                 const photoAuditLink = e.target.closest('.photo-audit-link');
@@ -2401,7 +2627,8 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     e.preventDefault();
                     const location = photoAuditLink.dataset.location;
                     const photoType = photoAuditLink.dataset.photoType;
-                    return navigate('audit-photo', { location, photoType, page: 1 });
+                    navigate('audit-photo', { location, photoType, page: 1 });
+                    return;
                 }
 
                 const pageNavBtn = e.target.closest('.search-pagination-btn, .pagination-btn');
@@ -2417,8 +2644,9 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                          renderSearchResults(newPage);
                     } else {
                          const newPage = direction === 'next' ? state.auditCurrentPage + 1 : state.auditCurrentPage - 1;
-                        return navigate('audit', { location: state.auditSelectedLocation, page: newPage });
+                        navigate('audit', { location: state.auditSelectedLocation, page: newPage });
                     }
+                    return;
                 }
                 
                 const compsCancelBtn = e.target.closest('#comps-cancel-btn');
@@ -2426,13 +2654,20 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                     document.getElementById('run-comps-modal').classList.remove('show');
                 }
                 
-                if (e.target.id === 'modal-confirm-btn' && state._modalConfirmCallback) state._modalConfirmCallback();
-                if (e.target.id === 'modal-cancel-btn' || e.target === document.getElementById('confirmation-modal')) hideConfirmationModal();
+                if (e.target.id === 'modal-confirm-btn' && state._modalConfirmCallback) {
+                    state._modalConfirmCallback();
+                }
+
+                if (e.target.id === 'modal-cancel-btn' || e.target === document.getElementById('confirmation-modal')) {
+                    hideConfirmationModal();
+                }
             });
             
             async function handlePhotoUpload(e) {
                 const file = e.target.files?.[0];
-                if (!file) return;
+                if (!file) {
+                    return;
+                }
 
                 if (state.photoUploadTarget?.startsWith('scan-')) {
                     const side = state.photoUploadTarget.split('-')[1];
@@ -2448,12 +2683,16 @@ Return ONLY a single, clean JSON object with this exact structure, with null for
                 }
 
                 const targetField = state.photoUploadTarget;
-                if (!targetField) return;
+                if (!targetField) {
+                    return;
+                }
                 
                 const originalButton = document.querySelector(`button[data-field="${targetField}"]`);
                 const originalButtonText = originalButton ? originalButton.textContent : 'Upload';
-                if(originalButton) originalButton.textContent = 'Uploading...';
-                if(originalButton) originalButton.disabled = true;
+                if(originalButton) {
+                    originalButton.textContent = 'Uploading...';
+                    originalButton.disabled = true;
+                }
 
                 const formData = new FormData();
                 formData.append('image', file);
